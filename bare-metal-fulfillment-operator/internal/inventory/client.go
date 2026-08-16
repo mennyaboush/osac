@@ -19,14 +19,17 @@ package inventory
 
 import (
 	"context"
+
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 )
 
 // Config is a struct that holds info needed to create a new client implementation
 type Config struct {
-	Name      string         `json:"name"`
-	Type      string         `json:"type"`
-	Options   map[string]any `json:"options"`
-	HostClass string         `json:"hostClass"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type"`
+	Options    map[string]any         `json:"options"`
+	HostClass  string                 `json:"hostClass"`
+	BMHManager *baremetalhost.Manager `json:"-"`
 }
 
 // Host is the common return type all clients must use
