@@ -20,12 +20,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bcmclient"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/shared"
 )
 
 const certBaseDir = "/etc/osac/certs"
@@ -35,9 +42,27 @@ const certBaseDir = "/etc/osac/certs"
 // without depending on the bcmclient package.
 type BCMAPI interface {
 	CertWatcher() *certwatcher.CertWatcher
+	GetDevices(ctx context.Context) ([]bcmclient.Device, error)
 }
 
-var _ Client = (*BCMClient)(nil)
+var (
+	_ Client = (*BCMClient)(nil)
+
+	macPattern      = regexp.MustCompile(`^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$`)
+	hostnamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9\-]*[a-z0-9])?$`)
+
+	bcmHostsAvailable = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "osac_bcm_hosts_available",
+			Help: "Number of unassigned BCM LiteNodes by host type",
+		},
+		[]string{"host_type"},
+	)
+)
+
+func init() {
+	metrics.Registry.MustRegister(bcmHostsAvailable)
+}
 
 // BCMClientConfig holds the BCM-specific options parsed from the inventory config.
 type BCMClientConfig struct {
@@ -102,9 +127,90 @@ func (c *BCMClient) CertWatcher() *certwatcher.CertWatcher {
 	return c.client.CertWatcher()
 }
 
-// FindFreeHost is implemented in OSAC-3766.
-func (c *BCMClient) FindFreeHost(_ context.Context, _ map[string]string) (*Host, error) {
-	return nil, fmt.Errorf("bcm FindFreeHost not implemented")
+// FindFreeHost queries BCM for all devices and returns a randomly selected
+// free LiteNode matching the requested hostType. All filtering is client-side
+// because the BCM JSON API has no server-side filtering.
+func (c *BCMClient) FindFreeHost(ctx context.Context, matchExpressions map[string]string) (*Host, error) {
+	log := ctrllog.FromContext(ctx)
+	log.Info("Finding free BCM host")
+
+	matchManagedBy := matchExpressions["managedBy"]
+	if matchManagedBy == "" {
+		matchManagedBy = shared.OsacDefaultManagedByValue
+	}
+	if matchManagedBy != shared.OsacDefaultManagedByValue {
+		return nil, nil
+	}
+
+	devices, err := c.client.GetDevices(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("FindFreeHost: %w", err)
+	}
+
+	hostType := matchExpressions["hostType"]
+
+	candidates := make([]bcmclient.Device, 0, len(devices))
+	for _, d := range devices {
+		if d.ChildType != "LiteNode" {
+			continue
+		}
+
+		if d.ExtraValues == nil {
+			continue
+		}
+
+		resourceClass, _ := d.ExtraValues[bcmclient.ExtraValueResourceClass].(string)
+		if resourceClass == "" {
+			continue
+		}
+
+		if hostType != "" && resourceClass != hostType {
+			continue
+		}
+
+		if _, assigned := d.ExtraValues[bcmclient.ExtraValueInstanceID]; assigned {
+			continue
+		}
+
+		if !hostnamePattern.MatchString(d.Hostname) || len(d.Hostname) > 63 {
+			continue
+		}
+
+		if !macPattern.MatchString(d.MAC) || d.MAC == "00:00:00:00:00:00" {
+			continue
+		}
+
+		candidates = append(candidates, d)
+	}
+
+	bcmHostsAvailable.Reset()
+	availableByType := map[string]float64{}
+	for _, cd := range candidates {
+		rc, _ := cd.ExtraValues[bcmclient.ExtraValueResourceClass].(string)
+		availableByType[rc]++
+	}
+	for t, count := range availableByType {
+		bcmHostsAvailable.WithLabelValues(t).Set(count)
+	}
+
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	rand.Shuffle(len(candidates), func(i, j int) {
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	})
+
+	selected := &candidates[0]
+	resourceClass, _ := selected.ExtraValues[bcmclient.ExtraValueResourceClass].(string)
+
+	return &Host{
+		InventoryHostID: fmt.Sprintf("%s/%s", c.bmhManager.Namespace(), selected.Hostname),
+		Name:            selected.Hostname,
+		HostType:        resourceClass,
+		HostClass:       c.hostClass,
+		ManagedBy:       shared.OsacDefaultManagedByValue,
+	}, nil
 }
 
 // AssignHost is implemented in OSAC-3767 through OSAC-3769.

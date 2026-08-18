@@ -256,7 +256,7 @@ func (c *Client) checkVersion(ctx context.Context) error {
 	if major < minMajorVersion ||
 		(major == minMajorVersion && minor < minMinorVersion) ||
 		(major == minMajorVersion && minor == minMinorVersion && patch < minPatchVersion) {
-		return fmt.Errorf("%w: got %s, need >= %d.%d.%02d",
+		return fmt.Errorf("%w: got %s, need >= %d.%d.%d",
 			ErrVersionTooOld, version.CMVersion, minMajorVersion, minMinorVersion, minPatchVersion)
 	}
 
