@@ -22,10 +22,14 @@ import (
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
 
+	metal3api "github.com/metal3-io/baremetal-operator/apis/metal3.io/v1alpha1"
 	osacv1alpha1 "github.com/osac-project/osac/bare-metal-fulfillment-operator/api/v1alpha1"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/inventory"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/management"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestMain(t *testing.T) {
@@ -76,11 +80,75 @@ var _ = Describe("Scheme Initialization", func() {
 	})
 
 	It("should handle core Kubernetes types", func() {
-		// Test that standard Kubernetes types are available
 		pod := &corev1.Pod{}
 		gvks, _, err := scheme.ObjectKinds(pod)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(gvks).NotTo(BeEmpty())
 		Expect(gvks[0].Kind).To(Equal("Pod"))
+	})
+
+	It("should register metal3 BareMetalHost types", func() {
+		Expect(scheme.IsGroupRegistered("metal3.io")).To(BeTrue())
+
+		bmh := &metal3api.BareMetalHost{}
+		gvks, _, err := scheme.ObjectKinds(bmh)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(gvks).NotTo(BeEmpty())
+		Expect(gvks[0].Kind).To(Equal("BareMetalHost"))
+	})
+})
+
+var _ = Describe("wireBMHManager", func() {
+	It("should set BMHManager when management is metal3", func() {
+		managementCfg := &management.Config{
+			Type: "metal3",
+			Options: map[string]any{
+				"metal3": map[string]any{
+					"namespace": "osac-baremetal",
+				},
+			},
+		}
+
+		var inventoryCfg inventory.Config
+		testScheme := runtime.NewScheme()
+		Expect(metal3api.AddToScheme(testScheme)).To(Succeed())
+		k8sClient := fake.NewClientBuilder().WithScheme(testScheme).Build()
+
+		err := wireBMHManager(managementCfg, &inventoryCfg, k8sClient)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inventoryCfg.BMHManager).NotTo(BeNil())
+		Expect(inventoryCfg.BMHManager.Namespace()).To(Equal("osac-baremetal"))
+	})
+
+	It("should not set BMHManager when management is not metal3", func() {
+		managementCfg := &management.Config{
+			Type: "openstack",
+			Options: map[string]any{
+				"openstack": map[string]any{},
+			},
+		}
+
+		var inventoryCfg inventory.Config
+		k8sClient := fake.NewClientBuilder().Build()
+
+		err := wireBMHManager(managementCfg, &inventoryCfg, k8sClient)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(inventoryCfg.BMHManager).To(BeNil())
+	})
+
+	It("should return error when metal3 namespace is missing", func() {
+		managementCfg := &management.Config{
+			Type: "metal3",
+			Options: map[string]any{
+				"metal3": map[string]any{},
+			},
+		}
+
+		var inventoryCfg inventory.Config
+		k8sClient := fake.NewClientBuilder().Build()
+
+		err := wireBMHManager(managementCfg, &inventoryCfg, k8sClient)
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("namespace is required"))
 	})
 })
