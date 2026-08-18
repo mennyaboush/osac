@@ -42,7 +42,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/yaml"
 
+	metal3api "github.com/metal3-io/baremetal-operator/apis/metal3.io/v1alpha1"
 	osacv1alpha1 "github.com/osac-project/osac/bare-metal-fulfillment-operator/api/v1alpha1"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/controller"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/helpers"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/inventory"
@@ -85,8 +87,8 @@ const (
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-
 	utilruntime.Must(osacv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(metal3api.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -408,15 +410,8 @@ func setupBareMetalInstanceController(
 		return fmt.Errorf("failed to parse inventory config: %w", err)
 	}
 
-	inventoryClient, err := inventory.NewClient(ctx, &inventoryConfig)
-	if err != nil {
-		return fmt.Errorf("failed to create inventory client: %w", err)
-	}
-	if inventoryClient == nil {
-		return fmt.Errorf("unsupported inventory type %q", inventoryConfig.Type)
-	}
-
-	// Read and parse management configuration
+	// Parse management config before inventory client — Metal3 management
+	// triggers BMH manager wiring on the inventory config.
 	managementConfigPath := helpers.GetEnvWithDefault(envManagementConfigPath, "/etc/osac/management/management.yaml")
 	managementConfigData, err := os.ReadFile(managementConfigPath)
 	if err != nil {
@@ -426,6 +421,27 @@ func setupBareMetalInstanceController(
 	var managementConfig management.Config
 	if err := yaml.Unmarshal(managementConfigData, &managementConfig); err != nil {
 		return fmt.Errorf("failed to parse management config: %w", err)
+	}
+
+	if err := wireBMHManager(&managementConfig, &inventoryConfig, mgr.GetClient()); err != nil {
+		return err
+	}
+
+	inventoryClient, err := inventory.NewClient(ctx, &inventoryConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create inventory client: %w", err)
+	}
+	if inventoryClient == nil {
+		return fmt.Errorf("unsupported inventory type %q", inventoryConfig.Type)
+	}
+
+	if bcmClient, ok := inventoryClient.(*inventory.BCMClient); ok {
+		if cw := bcmClient.CertWatcher(); cw != nil {
+			if err := mgr.Add(cw); err != nil {
+				return fmt.Errorf("failed to add BCM cert watcher: %w", err)
+			}
+			setupLog.Info("BCM cert watcher registered")
+		}
 	}
 
 	managementClient, err := management.NewClient(ctx, &managementConfig)
@@ -471,5 +487,22 @@ func setupBareMetalInstanceController(
 	).SetupWithManager(mgr, maxConcurrentReconciles); err != nil {
 		return fmt.Errorf("baremetalinstance controller: %w", err)
 	}
+	return nil
+}
+
+func wireBMHManager(
+	managementCfg *management.Config,
+	inventoryCfg *inventory.Config,
+	k8sClient client.Client,
+) error {
+	if managementCfg.Type != "metal3" {
+		return nil
+	}
+	ns, err := management.ParseMetal3ManagementNamespace(managementCfg)
+	if err != nil {
+		return fmt.Errorf("failed to parse metal3 namespace for BMH manager: %w", err)
+	}
+	inventoryCfg.BMHManager = baremetalhost.NewManager(k8sClient, ns)
+	setupLog.Info("BMH manager configured", "namespace", ns)
 	return nil
 }

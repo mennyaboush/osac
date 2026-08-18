@@ -23,6 +23,7 @@ secrets:
   inventoryConfig: "osac-inventory-config"
   managementConfig: "osac-management-config"
   osClouds: "osac-os-clouds"
+  bcmCerts: "osac-bcm-certs"
 
 configMaps:
   profiles: "osac-profiles"
