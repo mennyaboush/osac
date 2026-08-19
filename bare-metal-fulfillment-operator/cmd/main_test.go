@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
@@ -29,7 +30,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestMain(t *testing.T) {
@@ -98,57 +98,18 @@ var _ = Describe("Scheme Initialization", func() {
 	})
 })
 
-var _ = Describe("wireBMHManager", func() {
-	It("should set BMHManager when management is metal3", func() {
+var _ = Describe("createInventoryClient", func() {
+	It("should return error for unsupported inventory type", func() {
+		inventoryCfg := &inventory.Config{
+			Type: "unknown",
+		}
 		managementCfg := &management.Config{
 			Type: "metal3",
-			Options: map[string]any{
-				"metal3": map[string]any{
-					"namespace": "osac-baremetal",
-				},
-			},
 		}
 
-		var inventoryCfg inventory.Config
-		testScheme := runtime.NewScheme()
-		Expect(metal3api.AddToScheme(testScheme)).To(Succeed())
-		k8sClient := fake.NewClientBuilder().WithScheme(testScheme).Build()
-
-		err := wireBMHManager(managementCfg, &inventoryCfg, k8sClient)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(inventoryCfg.BMHManager).NotTo(BeNil())
-		Expect(inventoryCfg.BMHManager.Namespace()).To(Equal("osac-baremetal"))
-	})
-
-	It("should not set BMHManager when management is not metal3", func() {
-		managementCfg := &management.Config{
-			Type: "openstack",
-			Options: map[string]any{
-				"openstack": map[string]any{},
-			},
-		}
-
-		var inventoryCfg inventory.Config
-		k8sClient := fake.NewClientBuilder().Build()
-
-		err := wireBMHManager(managementCfg, &inventoryCfg, k8sClient)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(inventoryCfg.BMHManager).To(BeNil())
-	})
-
-	It("should return error when metal3 namespace is missing", func() {
-		managementCfg := &management.Config{
-			Type: "metal3",
-			Options: map[string]any{
-				"metal3": map[string]any{},
-			},
-		}
-
-		var inventoryCfg inventory.Config
-		k8sClient := fake.NewClientBuilder().Build()
-
-		err := wireBMHManager(managementCfg, &inventoryCfg, k8sClient)
+		client, err := createInventoryClient(context.Background(), inventoryCfg, managementCfg, nil)
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("namespace is required"))
+		Expect(err.Error()).To(ContainSubstring("unsupported inventory type"))
+		Expect(client).To(BeNil())
 	})
 })

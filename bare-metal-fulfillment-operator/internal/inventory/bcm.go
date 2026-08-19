@@ -26,38 +26,29 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
-	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bcmclient"
 )
 
 const certBaseDir = "/etc/osac/certs"
 
-var (
-	_ Client        = (*BCMClient)(nil)
-	_ NewClientFunc = NewClientFunc(NewBCMClient)
-)
-
-func init() {
-	newClientFuncs["bcm"] = NewBCMClient
+// BCMAPI defines the BCM client operations needed by the inventory adapter.
+// Satisfied by *bcmclient.Client; defined here so tests can substitute a mock
+// without depending on the bcmclient package.
+type BCMAPI interface {
+	CertWatcher() *certwatcher.CertWatcher
 }
 
-// bcmClientConfig holds the BCM-specific options from the inventory config.
-type bcmClientConfig struct {
+var _ Client = (*BCMClient)(nil)
+
+// BCMClientConfig holds the BCM-specific options parsed from the inventory config.
+type BCMClientConfig struct {
 	URL                string `json:"url"`
 	CredentialsSecret  string `json:"credentialsSecret"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
 }
 
-// BCMClient implements inventory.Client by wrapping a bcmclient.Client
-// for BCM API communication and a baremetalhost.Manager for BMH lifecycle.
-type BCMClient struct {
-	client     *bcmclient.Client
-	bmhManager *baremetalhost.Manager
-	hostClass  string
-}
-
-// NewBCMClient creates a BCM inventory client from the generic inventory config.
-func NewBCMClient(ctx context.Context, cfg *Config) (Client, error) {
-	bcmOpts, ok := cfg.Options["bcm"]
+// ParseBCMOptions extracts and validates BCM options from the inventory config.
+func ParseBCMOptions(options map[string]any) (*BCMClientConfig, error) {
+	bcmOpts, ok := options["bcm"]
 	if !ok {
 		return nil, fmt.Errorf("bcm options not found in config")
 	}
@@ -67,40 +58,41 @@ func NewBCMClient(ctx context.Context, cfg *Config) (Client, error) {
 		return nil, fmt.Errorf("failed to marshal bcm options: %w", err)
 	}
 
-	var bcmClientCfg bcmClientConfig
-	if err := json.Unmarshal(raw, &bcmClientCfg); err != nil {
+	var cfg BCMClientConfig
+	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal bcm options: %w", err)
 	}
 
-	if bcmClientCfg.URL == "" {
+	if cfg.URL == "" {
 		return nil, fmt.Errorf("bcm url is required in config")
 	}
-	if bcmClientCfg.CredentialsSecret == "" {
+	if cfg.CredentialsSecret == "" {
 		return nil, fmt.Errorf("bcm credentialsSecret is required in config")
 	}
 
-	certDir := filepath.Join(certBaseDir, bcmClientCfg.CredentialsSecret)
+	certDir := filepath.Join(certBaseDir, cfg.CredentialsSecret)
 	if !strings.HasPrefix(certDir, certBaseDir+"/") {
 		return nil, fmt.Errorf("bcm credentialsSecret resolves outside cert directory")
 	}
-	bcmCfg := &bcmclient.Config{
-		URL:                bcmClientCfg.URL,
-		CertFile:           filepath.Join(certDir, "tls.crt"),
-		KeyFile:            filepath.Join(certDir, "tls.key"),
-		CAFile:             filepath.Join(certDir, "ca.crt"),
-		InsecureSkipVerify: bcmClientCfg.InsecureSkipVerify,
-	}
 
-	client, err := bcmclient.NewClient(ctx, bcmCfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create bcm client: %w", err)
-	}
+	return &cfg, nil
+}
 
+// BCMClient implements inventory.Client by wrapping a BCMAPI
+// for BCM API communication and a baremetalhost.Manager for BMH lifecycle.
+type BCMClient struct {
+	client     BCMAPI
+	bmhManager *baremetalhost.Manager
+	hostClass  string
+}
+
+// NewBCMClient creates a BCM inventory client with injected dependencies.
+func NewBCMClient(client BCMAPI, bmhManager *baremetalhost.Manager, hostClass string) *BCMClient {
 	return &BCMClient{
 		client:     client,
-		bmhManager: cfg.BMHManager,
-		hostClass:  cfg.HostClass,
-	}, nil
+		bmhManager: bmhManager,
+		hostClass:  hostClass,
+	}
 }
 
 // CertWatcher returns the certificate watcher for registration with the
@@ -108,15 +100,6 @@ func NewBCMClient(ctx context.Context, cfg *Config) (Client, error) {
 // certificate rotation.
 func (c *BCMClient) CertWatcher() *certwatcher.CertWatcher {
 	return c.client.CertWatcher()
-}
-
-// NewBCMClientForTest creates a BCMClient with injected dependencies for testing.
-func NewBCMClientForTest(client *bcmclient.Client, bmhManager *baremetalhost.Manager, hostClass string) *BCMClient {
-	return &BCMClient{
-		client:     client,
-		bmhManager: bmhManager,
-		hostClass:  hostClass,
-	}
 }
 
 // FindFreeHost is implemented in OSAC-3766.

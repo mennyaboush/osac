@@ -45,6 +45,7 @@ import (
 	metal3api "github.com/metal3-io/baremetal-operator/apis/metal3.io/v1alpha1"
 	osacv1alpha1 "github.com/osac-project/osac/bare-metal-fulfillment-operator/api/v1alpha1"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bcmclient"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/controller"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/helpers"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/inventory"
@@ -423,25 +424,9 @@ func setupBareMetalInstanceController(
 		return fmt.Errorf("failed to parse management config: %w", err)
 	}
 
-	if err := wireBMHManager(&managementConfig, &inventoryConfig, mgr.GetClient()); err != nil {
-		return err
-	}
-
-	inventoryClient, err := inventory.NewClient(ctx, &inventoryConfig)
+	inventoryClient, err := createInventoryClient(ctx, &inventoryConfig, &managementConfig, mgr)
 	if err != nil {
-		return fmt.Errorf("failed to create inventory client: %w", err)
-	}
-	if inventoryClient == nil {
-		return fmt.Errorf("unsupported inventory type %q", inventoryConfig.Type)
-	}
-
-	if bcmClient, ok := inventoryClient.(*inventory.BCMClient); ok {
-		if cw := bcmClient.CertWatcher(); cw != nil {
-			if err := mgr.Add(cw); err != nil {
-				return fmt.Errorf("failed to add BCM cert watcher: %w", err)
-			}
-			setupLog.Info("BCM cert watcher registered")
-		}
+		return err
 	}
 
 	managementClient, err := management.NewClient(ctx, &managementConfig)
@@ -490,19 +475,67 @@ func setupBareMetalInstanceController(
 	return nil
 }
 
-func wireBMHManager(
-	managementCfg *management.Config,
+func createInventoryClient(
+	ctx context.Context,
 	inventoryCfg *inventory.Config,
-	k8sClient client.Client,
-) error {
-	if managementCfg.Type != "metal3" {
-		return nil
+	managementCfg *management.Config,
+	mgr ctrl.Manager,
+) (inventory.Client, error) {
+	if inventoryCfg.Type == "bcm" {
+		return createBCMInventoryClient(ctx, inventoryCfg, managementCfg, mgr)
 	}
-	ns, err := management.ParseMetal3ManagementNamespace(managementCfg)
+
+	inventoryClient, err := inventory.NewClient(ctx, inventoryCfg)
 	if err != nil {
-		return fmt.Errorf("failed to parse metal3 namespace for BMH manager: %w", err)
+		return nil, fmt.Errorf("failed to create inventory client: %w", err)
 	}
-	inventoryCfg.BMHManager = baremetalhost.NewManager(k8sClient, ns)
-	setupLog.Info("BMH manager configured", "namespace", ns)
-	return nil
+	if inventoryClient == nil {
+		return nil, fmt.Errorf("unsupported inventory type %q", inventoryCfg.Type)
+	}
+	return inventoryClient, nil
+}
+
+func createBCMInventoryClient(
+	ctx context.Context,
+	inventoryCfg *inventory.Config,
+	managementCfg *management.Config,
+	mgr ctrl.Manager,
+) (inventory.Client, error) {
+	bcmCfg, err := inventory.ParseBCMOptions(inventoryCfg.Options)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse bcm options: %w", err)
+	}
+
+	certDir := filepath.Join("/etc/osac/certs", bcmCfg.CredentialsSecret)
+	bcmClient, err := bcmclient.NewClient(ctx, &bcmclient.Config{
+		URL:                bcmCfg.URL,
+		CertFile:           filepath.Join(certDir, "tls.crt"),
+		KeyFile:            filepath.Join(certDir, "tls.key"),
+		CAFile:             filepath.Join(certDir, "ca.crt"),
+		InsecureSkipVerify: bcmCfg.InsecureSkipVerify,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create bcm client: %w", err)
+	}
+
+	var bmhMgr *baremetalhost.Manager
+	if managementCfg.Type == "metal3" {
+		ns, err := management.ParseMetal3ManagementNamespace(managementCfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse metal3 namespace for BMH manager: %w", err)
+		}
+		bmhMgr = baremetalhost.NewManager(mgr.GetClient(), ns)
+		setupLog.Info("BMH manager configured", "namespace", ns)
+	}
+
+	client := inventory.NewBCMClient(bcmClient, bmhMgr, inventoryCfg.HostClass)
+
+	if cw := client.CertWatcher(); cw != nil {
+		if err := mgr.Add(cw); err != nil {
+			return nil, fmt.Errorf("failed to add BCM cert watcher: %w", err)
+		}
+		setupLog.Info("BCM cert watcher registered")
+	}
+
+	return client, nil
 }
