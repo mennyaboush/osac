@@ -11,6 +11,7 @@ require (
 	github.com/onsi/gomega v1.42.1
 	github.com/osac-project/osac/osac-operator v0.0.10
 	github.com/osac-project/osac/osac-operator/api v0.0.7
+	github.com/stmcginnis/gofish v0.24.0
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.3

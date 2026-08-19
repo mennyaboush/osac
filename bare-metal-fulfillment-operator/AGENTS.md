@@ -53,6 +53,7 @@ bare-metal-fulfillment-operator/
 │   ├── main.go                # Operator entry point
 │   └── main_test.go           # Entry point tests
 ├── internal/
+│   ├── bmcdiscovery/          # BMC address discovery (Redfish system path, protocol classification, target validation)
 │   ├── controller/            # Reconciliation logic (pool + instance controllers)
 │   ├── helpers/               # Utility functions
 │   ├── inventory/             # BareMetalInstance's host inventory abstraction (pluggable backend interface)
@@ -109,6 +110,7 @@ Management Client (Ironic)
 
 | Package | Purpose |
 |---------|---------|
+| `internal/bmcdiscovery/` | BMC address discovery: protocol classification from interface names, Redfish system path discovery via MAC matching, BMC target validation |
 | `internal/controller/` | Pool and instance reconciliation (lifecycle, finalizers, status updates) |
 | `internal/inventory/` | Host allocation abstraction with pluggable backend interface (OpenStack, Metal3) and in-memory locking |
 | `internal/management/` | Power control via OpenStack Ironic integration |
