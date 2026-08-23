@@ -150,11 +150,15 @@ func (m *Manager) DeleteBMH(ctx context.Context, name string) error {
 // status.hardware.nics (Metal3 hardware inspection data). Returns nil when
 // the BMH has no hardware details or no NICs recorded.
 func (m *Manager) GetHardwareNICs(ctx context.Context, name string) ([]string, error) {
+	log := ctrllog.FromContext(ctx)
+
 	bmh := &metal3api.BareMetalHost{}
 	if err := m.client.Get(ctx, client.ObjectKey{Namespace: m.namespace, Name: name}, bmh); err != nil {
 		return nil, fmt.Errorf("failed to get BareMetalHost %s/%s: %w", m.namespace, name, err)
 	}
 	if bmh.Status.HardwareDetails == nil || len(bmh.Status.HardwareDetails.NIC) == 0 {
+		log.V(1).Info("BareMetalHost has no hardware NIC data",
+			"name", name, "namespace", m.namespace)
 		return nil, nil
 	}
 	macs := make([]string, 0, len(bmh.Status.HardwareDetails.NIC))
@@ -164,6 +168,9 @@ func (m *Manager) GetHardwareNICs(ctx context.Context, name string) ([]string, e
 		}
 		macs = append(macs, strings.ToLower(nic.MAC))
 	}
+
+	log.V(1).Info("Retrieved hardware NICs from BareMetalHost",
+		"name", name, "namespace", m.namespace, "count", len(macs))
 	return macs, nil
 }
 

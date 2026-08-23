@@ -700,6 +700,15 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			Expect(nics).To(BeNil())
 		})
 
+		It("filters out NICs with empty MAC addresses", func() {
+			client := newClientWithNICs("node001", "AA:BB:CC:DD:EE:01", "", "FF:00:11:22:33:44")
+			nics, err := client.GetHostNICs(ctx, "osac-baremetal/node001")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(nics).To(HaveLen(2))
+			Expect(nics[0].MAC).To(Equal("aa:bb:cc:dd:ee:01"))
+			Expect(nics[1].MAC).To(Equal("ff:00:11:22:33:44"))
+		})
+
 		It("returns error for invalid inventoryHostID format", func() {
 			client := newClientNoBMH()
 			_, err := client.GetHostNICs(ctx, "no-slash")
