@@ -289,6 +289,15 @@ bmf:
     profiles: "osac-profiles"
   env:
     aapInsecureSkipVerify: "true"
+  bcm:
+    enabled: false
+    url: ""
+    cert: ""
+    key: ""
+    caCert: ""
+    insecureSkipVerify: false
+    hostClass: "bcm"
+    bmhNamespace: ""
 
 # --- Validation hooks ---
 validation:
