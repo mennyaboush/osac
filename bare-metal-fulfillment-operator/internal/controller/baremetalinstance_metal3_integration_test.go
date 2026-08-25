@@ -76,7 +76,7 @@ func newMetal3Reconciler() *BareMetalInstanceReconciler {
 		invClient,
 		mgmtClient,
 		nil, // provisioning provider
-		0, 0, 0, 0,
+		0, 0, 0, 0, 0,
 	)
 }
 

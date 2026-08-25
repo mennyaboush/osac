@@ -40,6 +40,9 @@ const (
 
 	// DefaultProvisionPollIntervalDuration is the default interval to poll provisioning job status
 	DefaultProvisionPollIntervalDuration = provisioning.DefaultStatusPollInterval
+
+	// DefaultBMHReadinessPollIntervalDuration is the default interval to poll BareMetalHost readiness
+	DefaultBMHReadinessPollIntervalDuration = 30 * time.Second
 )
 
 var (

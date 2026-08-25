@@ -207,6 +207,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 			0,
 			0,
 			0,
+			0,
 		)
 	})
 
@@ -223,6 +224,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 					0,
 					-5*time.Second,
 					0,
+					-10*time.Second,
 				)
 			})
 
@@ -231,6 +233,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 				Expect(reconciler.TryLockFailPollIntervalDuration).To(Equal(DefaultTryLockFailPollIntervalDuration))
 				Expect(reconciler.ManagementRecheckIntervalDuration).To(Equal(DefaultManagementRecheckIntervalDuration))
 				Expect(reconciler.ProvisionPollIntervalDuration).To(Equal(DefaultProvisionPollIntervalDuration))
+				Expect(reconciler.BMHReadinessPollIntervalDuration).To(Equal(DefaultBMHReadinessPollIntervalDuration))
 			})
 		})
 
@@ -246,12 +249,14 @@ var _ = Describe("BareMetalInstance Controller", func() {
 					2*time.Second,
 					15*time.Second,
 					60*time.Second,
+					25*time.Second,
 				)
 
 				Expect(customReconciler.NoFreeHostsPollIntervalDuration).To(Equal(45 * time.Second))
 				Expect(customReconciler.TryLockFailPollIntervalDuration).To(Equal(2 * time.Second))
 				Expect(customReconciler.ManagementRecheckIntervalDuration).To(Equal(15 * time.Second))
 				Expect(customReconciler.ProvisionPollIntervalDuration).To(Equal(60 * time.Second))
+				Expect(customReconciler.BMHReadinessPollIntervalDuration).To(Equal(25 * time.Second))
 			})
 		})
 	})
@@ -392,6 +397,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 					return &inventory.Host{
 						InventoryHostID: inventoryHostID,
 						HostClass:       hostClass,
+						Ready:           true,
 					}, nil
 				}
 			})
@@ -1512,7 +1518,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 				invClient,
 				&mockManagementClient{},
 				nil,
-				0, 0, 0, 0,
+				0, 0, 0, 0, 0,
 			)
 			bmi = &v1alpha1.BareMetalInstance{
 				ObjectMeta: metav1.ObjectMeta{

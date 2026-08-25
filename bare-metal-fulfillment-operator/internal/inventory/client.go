@@ -39,6 +39,7 @@ type Host struct {
 	HostClass           string
 	ProvisionState      string
 	ManagedBy           string
+	Ready               bool // false = not ready, true = ready for use
 }
 
 // HostNIC represents a physical network interface on an inventory host.

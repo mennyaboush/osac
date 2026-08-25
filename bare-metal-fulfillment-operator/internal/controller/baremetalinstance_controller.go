@@ -52,6 +52,7 @@ type BareMetalInstanceReconciler struct {
 	TryLockFailPollIntervalDuration   time.Duration
 	ManagementRecheckIntervalDuration time.Duration
 	ProvisionPollIntervalDuration     time.Duration
+	BMHReadinessPollIntervalDuration  time.Duration
 }
 
 func NewBareMetalInstanceReconciler(
@@ -64,6 +65,7 @@ func NewBareMetalInstanceReconciler(
 	tryLockFailPollIntervalDuration time.Duration,
 	managementRecheckIntervalDuration time.Duration,
 	provisionPollIntervalDuration time.Duration,
+	bmhReadinessPollIntervalDuration time.Duration,
 ) *BareMetalInstanceReconciler {
 	if noFreeHostsPollIntervalDuration <= 0 {
 		noFreeHostsPollIntervalDuration = DefaultNoFreeHostsPollIntervalDuration
@@ -81,6 +83,10 @@ func NewBareMetalInstanceReconciler(
 		provisionPollIntervalDuration = DefaultProvisionPollIntervalDuration
 	}
 
+	if bmhReadinessPollIntervalDuration <= 0 {
+		bmhReadinessPollIntervalDuration = DefaultBMHReadinessPollIntervalDuration
+	}
+
 	return &BareMetalInstanceReconciler{
 		Client:                            client,
 		Scheme:                            scheme,
@@ -91,6 +97,7 @@ func NewBareMetalInstanceReconciler(
 		ProvisioningProvider:              provisioningProvider,
 		ManagementRecheckIntervalDuration: managementRecheckIntervalDuration,
 		ProvisionPollIntervalDuration:     provisionPollIntervalDuration,
+		BMHReadinessPollIntervalDuration:  bmhReadinessPollIntervalDuration,
 	}
 }
 
@@ -284,6 +291,15 @@ func (r *BareMetalInstanceReconciler) reconcileInventory(ctx context.Context, ba
 		return ctrl.Result{}, nil
 	}
 
+	// Check if host is ready before setting Allocated=True
+	if !inventoryHost.Ready {
+		log.V(1).Info("Host allocated but BareMetalHost not ready yet, retrying",
+			"InventoryHostID", bareMetalInstance.Spec.ExternalHostID)
+		// Keep ExternalHostID, requeue with poll interval
+		return ctrl.Result{RequeueAfter: r.BMHReadinessPollIntervalDuration}, nil
+	}
+
+	// Host is ready, proceed with Allocated=True
 	bareMetalInstance.Spec.HostClass = inventoryHost.HostClass
 	if err = r.Update(ctx, bareMetalInstance); err != nil {
 		log.Error(err, "Failed to update BareMetalInstance CR with HostClass", "HostClass", inventoryHost.HostClass)

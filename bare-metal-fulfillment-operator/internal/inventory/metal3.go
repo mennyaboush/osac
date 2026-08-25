@@ -342,5 +342,6 @@ func bmhToHost(bmh *metal3api.BareMetalHost, hostClass string) *Host {
 		HostClass:           hostClass,
 		ProvisionState:      string(bmh.Status.Provisioning.State),
 		ManagedBy:           managedBy,
+		Ready:               true, // Metal3 BMHs are pre-existing, immediately usable
 	}
 }

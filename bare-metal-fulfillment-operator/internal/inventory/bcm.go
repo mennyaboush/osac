@@ -279,7 +279,7 @@ func (c *BCMClient) AssignHost(ctx context.Context, inventoryHostID string, bare
 			existingIDStr, _ := existingID.(string)
 			if existingIDStr == bareMetalInstanceID {
 				log.Info("BCM host already assigned to this instance, skipping write", "hostname", hostname)
-				return c.createBMHAndBuildHost(ctx, device, bareMetalInstanceID)
+				return c.ensureBMHAndCheckReadiness(ctx, device, bareMetalInstanceID)
 			}
 			log.Info("BCM host assigned to another instance", "hostname", hostname, "existingInstanceID", existingIDStr)
 			return nil, nil
@@ -295,7 +295,7 @@ func (c *BCMClient) AssignHost(ctx context.Context, inventoryHostID string, bare
 	}
 
 	log.Info("BCM host assigned successfully", "hostname", hostname)
-	return c.createBMHAndBuildHost(ctx, verifiedDevice, bareMetalInstanceID)
+	return c.ensureBMHAndCheckReadiness(ctx, verifiedDevice, bareMetalInstanceID)
 }
 
 func (c *BCMClient) handleDeviceNotFound(ctx context.Context, hostname string) (*Host, error) {
@@ -351,42 +351,71 @@ func (c *BCMClient) verifyAssignment(ctx context.Context, hostname, bareMetalIns
 	return device, nil
 }
 
-func (c *BCMClient) createBMHAndBuildHost(ctx context.Context, device *bcmclient.Device, bareMetalInstanceID string) (*Host, error) {
+func (c *BCMClient) ensureBMHAndCheckReadiness(ctx context.Context, device *bcmclient.Device, bareMetalInstanceID string) (*Host, error) {
 	log := ctrllog.FromContext(ctx)
+	hostname := device.Hostname
 
+	// Step 1: Resolve BMC address (unchanged from OSAC-3768)
 	bmcAddress, err := c.resolveBMCAddress(ctx, device)
 	if err != nil {
 		return nil, err
 	}
 
-	credentialsSecret, _ := device.ExtraValues[bcmclient.ExtraValueBMCCredentials].(string)
-	if credentialsSecret == "" {
-		return nil, fmt.Errorf("BMC credentials Secret not configured for host %q"+
-			" — set osac_bmc_credentials_secret in BCM extra_values", device.Hostname)
+	// Step 2: Check if BMH exists
+	exists, err := c.bmhManager.BMHExists(ctx, hostname)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check BMH existence for %s: %w", hostname, err)
 	}
 
-	params := baremetalhost.CreateParams{
-		Name:              device.Hostname,
-		BMCAddress:        bmcAddress,
-		CredentialsSecret: credentialsSecret,
-		BootMACAddress:    device.MAC,
-		ConsumerRef: &corev1.ObjectReference{
-			APIVersion: "osac.openshift.io/v1alpha1",
-			Kind:       "BareMetalInstance",
-			Name:       bareMetalInstanceID,
-			Namespace:  c.bmhManager.Namespace(),
-		},
-		Labels: map[string]string{
-			Metal3ManagedByLabel: shared.OsacDefaultManagedByValue,
-		},
+	// Step 3: Create BMH if it doesn't exist
+	if !exists {
+		credentialsSecret, _ := device.ExtraValues[bcmclient.ExtraValueBMCCredentials].(string)
+		if credentialsSecret == "" {
+			return nil, fmt.Errorf("BMC credentials Secret not configured for host %q"+
+				" — set osac_bmc_credentials_secret in BCM extra_values", hostname)
+		}
+
+		params := baremetalhost.CreateParams{
+			Name:              hostname,
+			BMCAddress:        bmcAddress,
+			CredentialsSecret: credentialsSecret,
+			BootMACAddress:    device.MAC,
+			ConsumerRef: &corev1.ObjectReference{
+				APIVersion: "osac.openshift.io/v1alpha1",
+				Kind:       "BareMetalInstance",
+				Name:       bareMetalInstanceID,
+				Namespace:  c.bmhManager.Namespace(),
+			},
+			Labels: map[string]string{
+				Metal3ManagedByLabel: shared.OsacDefaultManagedByValue,
+			},
+		}
+
+		if err := c.bmhManager.CreateBMH(ctx, params); err != nil {
+			return nil, fmt.Errorf("failed to create BareMetalHost for %s: %w", hostname, err)
+		}
+		log.Info("Created BareMetalHost", "name", hostname)
+	} else {
+		log.V(1).Info("BareMetalHost already exists, checking readiness", "name", hostname)
 	}
 
-	if err := c.bmhManager.CreateBMH(ctx, params); err != nil {
-		return nil, fmt.Errorf("failed to create BareMetalHost for %s: %w", device.Hostname, err)
+	// Step 4: Check readiness (single check, not a blocking poll)
+	ready, err := c.bmhManager.IsBMHReady(ctx, hostname)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check BMH readiness for %s: %w", hostname, err)
 	}
 
-	log.V(1).Info("BareMetalHost created", "hostname", device.Hostname, "bmcAddress", bmcAddress)
-	return c.buildHost(device), nil
+	// Step 5: Build Host with Ready field
+	host := c.buildHost(device)
+	host.Ready = ready
+
+	if !ready {
+		log.V(1).Info("BareMetalHost not ready yet, returning Host with Ready=false", "name", hostname)
+		return host, nil // Controller will requeue and retry
+	}
+
+	log.V(1).Info("BareMetalHost is ready", "name", hostname)
+	return host, nil
 }
 
 func (c *BCMClient) resolveBMCAddress(ctx context.Context, device *bcmclient.Device) (string, error) {

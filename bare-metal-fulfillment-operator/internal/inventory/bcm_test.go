@@ -157,6 +157,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 					}),
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(verifiedDevice, nil),
 			)
+			bmhMgr.EXPECT().BMHExists(gomock.Any(), "node001").Return(false, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, params baremetalhost.CreateParams) error {
 					Expect(params.Name).To(Equal("node001"))
@@ -169,6 +170,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 					Expect(params.Labels).To(HaveKeyWithValue("osac.openshift.io/managed-by", "baremetal"))
 					return nil
 				})
+			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
@@ -179,12 +181,15 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			Expect(host.HostType).To(Equal("h100"))
 			Expect(host.HostClass).To(Equal("bcm"))
 			Expect(host.ManagedBy).To(Equal("baremetal"))
+			Expect(host.Ready).To(BeTrue())
 		})
 
 		It("should skip write but still create BMH when osac_instance_id already matches", func(ctx context.Context) {
 			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","extra_values":{"resource_class":"h100","osac_instance_id":"bmi-123","osac_bmc_address":"ipmi://10.0.0.1","osac_bmc_credentials_secret":"bmc-secret"}}`)
 			mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil)
+			bmhMgr.EXPECT().BMHExists(gomock.Any(), "node001").Return(false, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
+			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
@@ -192,6 +197,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			Expect(host).NotTo(BeNil())
 			Expect(host.Name).To(Equal("node001"))
 			Expect(host.HostClass).To(Equal("bcm"))
+			Expect(host.Ready).To(BeTrue())
 		})
 
 		It("should return nil when host is taken by another instance", func(ctx context.Context) {
@@ -274,12 +280,15 @@ var _ = Describe("BCM Inventory Adapter", func() {
 					}),
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(verifiedDevice, nil),
 			)
+			bmhMgr.EXPECT().BMHExists(gomock.Any(), "node001").Return(false, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
+			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(host).NotTo(BeNil())
+			Expect(host.Ready).To(BeTrue())
 		})
 
 		It("should return error when GetDevice fails", func(ctx context.Context) {
@@ -389,6 +398,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 				mockAPI.EXPECT().UpdateDevice(gomock.Any(), gomock.Any()).Return(&bcmclient.UpdateResponse{Success: true}, nil),
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(verifiedDevice, nil),
 			)
+			bmhMgr.EXPECT().BMHExists(gomock.Any(), "node001").Return(false, nil)
 
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
@@ -424,6 +434,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 				mockAPI.EXPECT().UpdateDevice(gomock.Any(), gomock.Any()).Return(&bcmclient.UpdateResponse{Success: true}, nil),
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(verifiedDevice, nil),
 			)
+			bmhMgr.EXPECT().BMHExists(gomock.Any(), "node001").Return(false, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(fmt.Errorf("failed to create BMH: conflict"))
 
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
@@ -447,17 +458,20 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			mockDisc.EXPECT().DiscoverSystemPath(gomock.Any(), "10.141.0.1", "aa:bb:cc:dd:ee:01", "admin", "pass").
 				Return("/redfish/v1/Systems/1", nil)
 			mockAPI.EXPECT().UpdateDevice(gomock.Any(), gomock.Any()).Return(&bcmclient.UpdateResponse{Success: true}, nil)
+			bmhMgr.EXPECT().BMHExists(gomock.Any(), "node001").Return(false, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, params baremetalhost.CreateParams) error {
 					Expect(params.BMCAddress).To(Equal("redfish-virtualmedia+https://10.141.0.1/redfish/v1/Systems/1"))
 					return nil
 				})
+			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			client.SetBMCDiscoverer(mockDisc)
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(host).NotTo(BeNil())
+			Expect(host.Ready).To(BeTrue())
 		})
 
 		It("should use IPMI static address when interface name is ipmi0 (Priority 2)", func(ctx context.Context) {
@@ -471,16 +485,19 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			)
 			bmhMgr.EXPECT().ReadBMCCredentials(gomock.Any(), "bmc-secret").Return("admin", "pass", nil)
 			mockAPI.EXPECT().UpdateDevice(gomock.Any(), gomock.Any()).Return(&bcmclient.UpdateResponse{Success: true}, nil)
+			bmhMgr.EXPECT().BMHExists(gomock.Any(), "node001").Return(false, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, params baremetalhost.CreateParams) error {
 					Expect(params.BMCAddress).To(Equal("ipmi://10.141.0.1"))
 					return nil
 				})
+			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(host).NotTo(BeNil())
+			Expect(host.Ready).To(BeTrue())
 		})
 
 		It("should cache discovered BMC address in BCM after Redfish discovery", func(ctx context.Context) {
@@ -503,13 +520,16 @@ var _ = Describe("BCM Inventory Adapter", func() {
 					Expect(ev).To(HaveKeyWithValue("osac_instance_id", "bmi-123"), "cache update must preserve osac_instance_id")
 					return &bcmclient.UpdateResponse{Success: true}, nil
 				})
+			bmhMgr.EXPECT().BMHExists(gomock.Any(), "node001").Return(false, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
+			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			client.SetBMCDiscoverer(mockDisc)
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(host).NotTo(BeNil())
+			Expect(host.Ready).To(BeTrue())
 		})
 
 		It("should return error when BMHExists check fails for missing device", func(ctx context.Context) {
