@@ -122,6 +122,41 @@ func (m *Manager) CreateBMH(ctx context.Context, params CreateParams) error {
 	return fmt.Errorf("BareMetalHost %s/%s already exists with different consumerRef", m.namespace, params.Name)
 }
 
+// BMHExists checks whether a BareMetalHost CR exists in the configured namespace.
+func (m *Manager) BMHExists(ctx context.Context, name string) (bool, error) {
+	bmh := &metal3api.BareMetalHost{}
+	err := m.client.Get(ctx, client.ObjectKey{Namespace: m.namespace, Name: name}, bmh)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to check BareMetalHost %s/%s existence: %w", m.namespace, name, err)
+	}
+	return true, nil
+}
+
+// ReadBMCCredentials reads a BMC credentials Secret from the Metal3 namespace
+// and returns the username and password. The Secret must have "username" and
+// "password" keys (standard Metal3/BMO format).
+func (m *Manager) ReadBMCCredentials(ctx context.Context, secretName string) (string, string, error) {
+	secret := &corev1.Secret{}
+	if err := m.client.Get(ctx, client.ObjectKey{Namespace: m.namespace, Name: secretName}, secret); err != nil {
+		return "", "", fmt.Errorf("failed to read BMC credentials Secret %s/%s: %w", m.namespace, secretName, err)
+	}
+
+	username := string(secret.Data["username"])
+	password := string(secret.Data["password"])
+
+	if username == "" {
+		return "", "", fmt.Errorf("BMC credentials Secret %s/%s is missing the 'username' key", m.namespace, secretName)
+	}
+	if password == "" {
+		return "", "", fmt.Errorf("BMC credentials Secret %s/%s is missing the 'password' key", m.namespace, secretName)
+	}
+
+	return username, password, nil
+}
+
 // DeleteBMH deletes a BareMetalHost CR by name. Idempotent — ignores NotFound.
 // Does not delete BMC credentials Secrets (they are admin-managed and reusable).
 func (m *Manager) DeleteBMH(ctx context.Context, name string) error {

@@ -46,6 +46,7 @@ import (
 	osacv1alpha1 "github.com/osac-project/osac/bare-metal-fulfillment-operator/api/v1alpha1"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bcmclient"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bmcdiscovery"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/controller"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/helpers"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/inventory"
@@ -535,6 +536,12 @@ func createBCMInventoryClient(
 	}
 
 	client := inventory.NewBCMClient(bcmClient, bmhMgr, inventoryCfg.HostClass)
+
+	discoverer := &bmcdiscovery.GofishDiscoverer{
+		InsecureSkipVerify: bcmCfg.InsecureSkipVerify,
+	}
+	client.SetBMCDiscoverer(discoverer)
+	setupLog.Info("BMC Redfish discoverer configured", "insecureSkipVerify", bcmCfg.InsecureSkipVerify)
 
 	if cw := client.CertWatcher(); cw != nil {
 		if err := mgr.Add(cw); err != nil {
