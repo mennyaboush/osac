@@ -25,15 +25,25 @@ type jsonRequest struct {
 	Args    any    `json:"args"`
 }
 
+// DeviceInterface represents a network interface entry from a BCM
+// device's interfaces array. Only fields needed for BMC discovery
+// are included.
+type DeviceInterface struct {
+	ChildType string `json:"childType"`
+	Name      string `json:"name"`
+	IP        string `json:"ip"`
+}
+
 // Device represents a BCM device with typed access to OSAC-relevant
 // fields plus the raw JSON needed for full-object update round-trips.
 type Device struct {
-	BaseType    string         `json:"baseType"`
-	ChildType   string         `json:"childType"`
-	UUID        string         `json:"uuid"`
-	Hostname    string         `json:"hostname"`
-	MAC         string         `json:"mac"`
-	ExtraValues map[string]any `json:"extra_values"`
+	BaseType    string            `json:"baseType"`
+	ChildType   string            `json:"childType"`
+	UUID        string            `json:"uuid"`
+	Hostname    string            `json:"hostname"`
+	MAC         string            `json:"mac"`
+	ExtraValues map[string]any    `json:"extra_values"`
+	Interfaces  []DeviceInterface `json:"interfaces"`
 
 	Raw json.RawMessage `json:"-"`
 }

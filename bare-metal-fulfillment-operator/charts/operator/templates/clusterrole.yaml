@@ -7,6 +7,12 @@ metadata:
     {{- include "bare-metal-fulfillment-operator.labels" . | nindent 4 }}
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+- apiGroups:
   - metal3.io
   resources:
   - baremetalhosts

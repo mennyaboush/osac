@@ -33,6 +33,7 @@ const testNamespace = "osac-baremetal"
 
 func newTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
+	Expect(corev1.AddToScheme(s)).To(Succeed())
 	Expect(metal3api.AddToScheme(s)).To(Succeed())
 	return s
 }
@@ -291,6 +292,93 @@ var _ = Describe("BareMetalHost Manager", func() {
 
 			_, err := mgr.IsBMHReady(ctx, "nonexistent")
 			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("BMHExists", func() {
+		It("should return true when BMH exists", func() {
+			bmh := &metal3api.BareMetalHost{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node001",
+					Namespace: testNamespace,
+				},
+			}
+			mgr := newTestManager(bmh)
+
+			exists, err := mgr.BMHExists(ctx, "node001")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(exists).To(BeTrue())
+		})
+
+		It("should return false when BMH does not exist", func() {
+			mgr := newTestManager()
+
+			exists, err := mgr.BMHExists(ctx, "nonexistent")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(exists).To(BeFalse())
+		})
+	})
+
+	Describe("ReadBMCCredentials", func() {
+		It("should return username and password from Secret", func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node001-bmc-secret",
+					Namespace: testNamespace,
+				},
+				Data: map[string][]byte{
+					"username": []byte("admin"),
+					"password": []byte("s3cret"),
+				},
+			}
+			mgr := newTestManager(secret)
+
+			username, password, err := mgr.ReadBMCCredentials(ctx, "node001-bmc-secret")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(username).To(Equal("admin"))
+			Expect(password).To(Equal("s3cret"))
+		})
+
+		It("should return error when Secret not found", func() {
+			mgr := newTestManager()
+
+			_, _, err := mgr.ReadBMCCredentials(ctx, "nonexistent")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("failed to read BMC credentials Secret"))
+		})
+
+		It("should return error when username key is missing", func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node001-bmc-secret",
+					Namespace: testNamespace,
+				},
+				Data: map[string][]byte{
+					"password": []byte("s3cret"),
+				},
+			}
+			mgr := newTestManager(secret)
+
+			_, _, err := mgr.ReadBMCCredentials(ctx, "node001-bmc-secret")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("missing the 'username' key"))
+		})
+
+		It("should return error when password key is missing", func() {
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node001-bmc-secret",
+					Namespace: testNamespace,
+				},
+				Data: map[string][]byte{
+					"username": []byte("admin"),
+				},
+			}
+			mgr := newTestManager(secret)
+
+			_, _, err := mgr.ReadBMCCredentials(ctx, "node001-bmc-secret")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("missing the 'password' key"))
 		})
 	})
 })

@@ -26,12 +26,14 @@ import (
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bcmclient"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bmcdiscovery"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/shared"
 )
 
@@ -41,7 +43,7 @@ const certBaseDir = "/etc/osac/certs"
 // Satisfied by *bcmclient.Client; defined here so tests can substitute a mock
 // without depending on the bcmclient package.
 //
-//go:generate mockgen -destination=bcm_mock_test.go -package=inventory . BCMAPI,BMHLifecycleManager
+//go:generate mockgen -destination=bcm_mock_test.go -package=inventory . BCMAPI,BMHLifecycleManager,BMCDiscoverer
 type BCMAPI interface {
 	CertWatcher() *certwatcher.CertWatcher
 	GetDevices(ctx context.Context) ([]bcmclient.Device, error)
@@ -52,10 +54,22 @@ type BCMAPI interface {
 // BMHLifecycleManager abstracts BareMetalHost CR operations for testability.
 // Satisfied by *baremetalhost.Manager.
 type BMHLifecycleManager interface {
+	CreateBMH(ctx context.Context, params baremetalhost.CreateParams) error
+	BMHExists(ctx context.Context, name string) (bool, error)
 	IsBMHReady(ctx context.Context, name string) (bool, error)
+	ReadBMCCredentials(ctx context.Context, secretName string) (username, password string, err error)
 	GetHardwareNICs(ctx context.Context, name string) ([]string, error)
 	Namespace() string
 }
+
+// BMCDiscoverer resolves BMC system paths via Redfish. Satisfied by
+// *bmcdiscovery.GofishDiscoverer; defined here so tests can substitute
+// a mock without making real Redfish connections.
+type BMCDiscoverer interface {
+	DiscoverSystemPath(ctx context.Context, bmcIP, bootMAC, username, password string) (string, error)
+}
+
+const bmcInterfaceChildType = "NetworkBmcInterface"
 
 var (
 	_ Client = (*BCMClient)(nil)
@@ -118,9 +132,10 @@ func ParseBCMOptions(options map[string]any) (*BCMClientConfig, error) {
 // BCMClient implements inventory.Client by wrapping a BCMAPI
 // for BCM API communication and a BMHLifecycleManager for BMH lifecycle.
 type BCMClient struct {
-	client     BCMAPI
-	bmhManager BMHLifecycleManager
-	hostClass  string
+	client        BCMAPI
+	bmhManager    BMHLifecycleManager
+	bmcDiscoverer BMCDiscoverer
+	hostClass     string
 }
 
 // NewBCMClient creates a BCM inventory client with injected dependencies.
@@ -130,6 +145,13 @@ func NewBCMClient(client BCMAPI, bmhManager BMHLifecycleManager, hostClass strin
 		bmhManager: bmhManager,
 		hostClass:  hostClass,
 	}
+}
+
+// SetBMCDiscoverer sets the Redfish discoverer used for Priority 2 BMC
+// address resolution. When nil, Redfish-compatible protocols fall through
+// to Priority 3. IPMI does not require a discoverer (static URL).
+func (c *BCMClient) SetBMCDiscoverer(d BMCDiscoverer) {
+	c.bmcDiscoverer = d
 }
 
 // CertWatcher returns the certificate watcher for registration with the
@@ -225,9 +247,10 @@ func (c *BCMClient) FindFreeHost(ctx context.Context, matchExpressions map[strin
 	}, nil
 }
 
-// AssignHost records the assignment identifier in BCM and verifies the write
-// succeeded. Uses full-object replacement because BCM's updateDevice rejects
-// partial objects. Only osac_instance_id is written — no tenant-identifying data.
+// AssignHost records the assignment identifier in BCM, resolves the BMC
+// address, and creates a BareMetalHost CR for Metal3 power management.
+// Uses full-object replacement because BCM's updateDevice rejects partial
+// objects. Only osac_instance_id is written — no tenant-identifying data.
 func (c *BCMClient) AssignHost(ctx context.Context, inventoryHostID string, bareMetalInstanceID string, _ map[string]string) (*Host, error) {
 	log := ctrllog.FromContext(ctx)
 
@@ -256,7 +279,7 @@ func (c *BCMClient) AssignHost(ctx context.Context, inventoryHostID string, bare
 			existingIDStr, _ := existingID.(string)
 			if existingIDStr == bareMetalInstanceID {
 				log.Info("BCM host already assigned to this instance, skipping write", "hostname", hostname)
-				return c.buildHost(device), nil
+				return c.createBMHAndBuildHost(ctx, device, bareMetalInstanceID)
 			}
 			log.Info("BCM host assigned to another instance", "hostname", hostname, "existingInstanceID", existingIDStr)
 			return nil, nil
@@ -272,19 +295,19 @@ func (c *BCMClient) AssignHost(ctx context.Context, inventoryHostID string, bare
 	}
 
 	log.Info("BCM host assigned successfully", "hostname", hostname)
-	return c.buildHost(device), nil
+	return c.createBMHAndBuildHost(ctx, device, bareMetalInstanceID)
 }
 
 func (c *BCMClient) handleDeviceNotFound(ctx context.Context, hostname string) (*Host, error) {
 	log := ctrllog.FromContext(ctx)
 
-	_, bmhErr := c.bmhManager.IsBMHReady(ctx, hostname)
-	if bmhErr != nil {
-		if apierrors.IsNotFound(bmhErr) {
-			log.Info("BCM device not found and no BMH exists, clearing for retry", "hostname", hostname)
-			return nil, nil
-		}
-		return nil, fmt.Errorf("AssignHost: failed to check BMH existence for %q: %w", hostname, bmhErr)
+	exists, err := c.bmhManager.BMHExists(ctx, hostname)
+	if err != nil {
+		return nil, fmt.Errorf("AssignHost: %w", err)
+	}
+	if !exists {
+		log.Info("BCM device not found and no BMH exists, clearing for retry", "hostname", hostname)
+		return nil, nil
 	}
 
 	return nil, fmt.Errorf(
@@ -326,6 +349,114 @@ func (c *BCMClient) verifyAssignment(ctx context.Context, hostname, bareMetalIns
 	}
 
 	return true, nil
+}
+
+func (c *BCMClient) createBMHAndBuildHost(ctx context.Context, device *bcmclient.Device, bareMetalInstanceID string) (*Host, error) {
+	log := ctrllog.FromContext(ctx)
+
+	bmcAddress, err := c.resolveBMCAddress(ctx, device)
+	if err != nil {
+		return nil, fmt.Errorf("AssignHost: %w", err)
+	}
+
+	credentialsSecret, _ := device.ExtraValues[bcmclient.ExtraValueBMCCredentials].(string)
+	if credentialsSecret == "" {
+		return nil, fmt.Errorf("AssignHost: BMC credentials Secret not configured for host %q"+
+			" — set osac_bmc_credentials_secret in BCM extra_values", device.Hostname)
+	}
+
+	params := baremetalhost.CreateParams{
+		Name:              device.Hostname,
+		BMCAddress:        bmcAddress,
+		CredentialsSecret: credentialsSecret,
+		BootMACAddress:    device.MAC,
+		ConsumerRef: &corev1.ObjectReference{
+			APIVersion: "osac.openshift.io/v1alpha1",
+			Kind:       "BareMetalInstance",
+			Name:       bareMetalInstanceID,
+			Namespace:  c.bmhManager.Namespace(),
+		},
+		Labels: map[string]string{
+			Metal3ManagedByLabel: shared.OsacDefaultManagedByValue,
+		},
+	}
+
+	if err := c.bmhManager.CreateBMH(ctx, params); err != nil {
+		return nil, fmt.Errorf("AssignHost: %w", err)
+	}
+
+	log.Info("BareMetalHost created", "hostname", device.Hostname, "bmcAddress", bmcAddress)
+	return c.buildHost(device), nil
+}
+
+func (c *BCMClient) resolveBMCAddress(ctx context.Context, device *bcmclient.Device) (string, error) {
+	log := ctrllog.FromContext(ctx)
+
+	if addr, ok := device.ExtraValues[bcmclient.ExtraValueBMCAddress].(string); ok && addr != "" {
+		if err := bmcdiscovery.ValidateBMCAddress(addr); err != nil {
+			return "", fmt.Errorf("pre-configured BMC address for host %q is invalid: %w", device.Hostname, err)
+		}
+		log.V(1).Info("Using pre-configured BMC address (Priority 1)", "hostname", device.Hostname, "address", addr)
+		return addr, nil
+	}
+
+	bmcInterfaces := make([]bmcdiscovery.DeviceInterface, 0, len(device.Interfaces))
+	for _, iface := range device.Interfaces {
+		bmcInterfaces = append(bmcInterfaces, bmcdiscovery.DeviceInterface{
+			ChildType: iface.ChildType,
+			Name:      iface.Name,
+			IP:        iface.IP,
+		})
+	}
+
+	bmcInfo, err := bmcdiscovery.ExtractBMCInfo(bmcInterfaces, bmcInterfaceChildType)
+	if err != nil {
+		return "", fmt.Errorf("BMC info not available for host %q"+
+			" — configure osac_bmc_address in BCM extra_values or register the node with BMC interface data", device.Hostname)
+	}
+
+	log.Info("Resolving BMC address via discovery (Priority 2)", "hostname", device.Hostname, "bmcIP", bmcInfo.IP, "protocol", bmcInfo.Protocol)
+
+	username, password, err := c.readBMCCredentials(ctx, device)
+	if err != nil {
+		return "", err
+	}
+
+	addr, err := bmcdiscovery.Resolve(ctx, bmcInfo, device.MAC, username, password, c.bmcDiscoverer)
+	if err != nil {
+		return "", fmt.Errorf("BMC address discovery failed for host %q: %w", device.Hostname, err)
+	}
+
+	if err := c.cacheBMCAddress(ctx, device, addr); err != nil {
+		log.Info("Failed to cache discovered BMC address in BCM, will rediscover on next reconcile",
+			"hostname", device.Hostname, "error", err)
+	}
+
+	return addr, nil
+}
+
+func (c *BCMClient) readBMCCredentials(ctx context.Context, device *bcmclient.Device) (string, string, error) {
+	credentialsSecret, _ := device.ExtraValues[bcmclient.ExtraValueBMCCredentials].(string)
+	if credentialsSecret == "" {
+		return "", "", fmt.Errorf("BMC credentials Secret not configured for host %q"+
+			" — set osac_bmc_credentials_secret in BCM extra_values", device.Hostname)
+	}
+
+	username, password, err := c.bmhManager.ReadBMCCredentials(ctx, credentialsSecret)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read BMC credentials for host %q: %w", device.Hostname, err)
+	}
+
+	return username, password, nil
+}
+
+func (c *BCMClient) cacheBMCAddress(ctx context.Context, device *bcmclient.Device, addr string) error {
+	raw, err := bcmclient.SetExtraValue(device.Raw, bcmclient.ExtraValueBMCAddress, addr)
+	if err != nil {
+		return err
+	}
+	_, err = c.client.UpdateDevice(ctx, raw)
+	return err
 }
 
 func (c *BCMClient) buildHost(device *bcmclient.Device) *Host {
