@@ -288,7 +288,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("AssignHost"))
+			Expect(err.Error()).To(ContainSubstring("failed to get BCM device"))
 			Expect(host).To(BeNil())
 		})
 
@@ -303,7 +303,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("AssignHost"))
+			Expect(err.Error()).To(ContainSubstring("failed to update BCM device"))
 			Expect(host).To(BeNil())
 		})
 
@@ -319,7 +319,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("AssignHost"))
+			Expect(err.Error()).To(ContainSubstring("failed to update BCM device"))
 			Expect(host).To(BeNil())
 		})
 
@@ -344,7 +344,6 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, "invalid-no-slash", "bmi-123", nil)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("AssignHost"))
 			Expect(err.Error()).To(ContainSubstring("invalid host ID"))
 			Expect(host).To(BeNil())
 		})
@@ -353,7 +352,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, "", "bmi-123", nil)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("AssignHost"))
+			Expect(err.Error()).To(ContainSubstring("invalid host ID"))
 			Expect(host).To(BeNil())
 		})
 
@@ -377,7 +376,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
 			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("verify-after-write"))
+			Expect(err.Error()).To(ContainSubstring("failed to verify BCM assignment"))
 			Expect(host).To(BeNil())
 		})
 
@@ -436,7 +435,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 
 		It("should use Redfish discovery when osac_bmc_address is absent but interfaces exist (Priority 2)", func(ctx context.Context) {
 			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","interfaces":[{"childType":"NetworkBmcInterface","name":"rf0","ip":"10.141.0.1"}],"extra_values":{"resource_class":"h100","osac_bmc_credentials_secret":"bmc-secret"}}`)
-			verifiedDevice := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","extra_values":{"resource_class":"h100","osac_bmc_credentials_secret":"bmc-secret","osac_instance_id":"bmi-123"}}`)
+			verifiedDevice := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","interfaces":[{"childType":"NetworkBmcInterface","name":"rf0","ip":"10.141.0.1"}],"extra_values":{"resource_class":"h100","osac_bmc_credentials_secret":"bmc-secret","osac_instance_id":"bmi-123"}}`)
 
 			gomock.InOrder(
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil),
@@ -463,7 +462,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 
 		It("should use IPMI static address when interface name is ipmi0 (Priority 2)", func(ctx context.Context) {
 			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","interfaces":[{"childType":"NetworkBmcInterface","name":"ipmi0","ip":"10.141.0.1"}],"extra_values":{"resource_class":"h100","osac_bmc_credentials_secret":"bmc-secret"}}`)
-			verifiedDevice := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","extra_values":{"resource_class":"h100","osac_bmc_credentials_secret":"bmc-secret","osac_instance_id":"bmi-123"}}`)
+			verifiedDevice := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","interfaces":[{"childType":"NetworkBmcInterface","name":"ipmi0","ip":"10.141.0.1"}],"extra_values":{"resource_class":"h100","osac_bmc_credentials_secret":"bmc-secret","osac_instance_id":"bmi-123"}}`)
 
 			gomock.InOrder(
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil),
@@ -486,7 +485,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 
 		It("should cache discovered BMC address in BCM after Redfish discovery", func(ctx context.Context) {
 			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","interfaces":[{"childType":"NetworkBmcInterface","name":"rf0","ip":"10.141.0.1"}],"extra_values":{"resource_class":"h100","osac_bmc_credentials_secret":"bmc-secret"}}`)
-			verifiedDevice := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","extra_values":{"resource_class":"h100","osac_bmc_credentials_secret":"bmc-secret","osac_instance_id":"bmi-123"}}`)
+			verifiedDevice := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","interfaces":[{"childType":"NetworkBmcInterface","name":"rf0","ip":"10.141.0.1"}],"extra_values":{"resource_class":"h100","osac_bmc_credentials_secret":"bmc-secret","osac_instance_id":"bmi-123"}}`)
 
 			gomock.InOrder(
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil),
@@ -501,6 +500,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 				func(_ context.Context, raw json.RawMessage) (*bcmclient.UpdateResponse, error) {
 					ev := extraValues(raw)
 					Expect(ev).To(HaveKeyWithValue("osac_bmc_address", "redfish-virtualmedia+https://10.141.0.1/redfish/v1/Systems/1"))
+					Expect(ev).To(HaveKeyWithValue("osac_instance_id", "bmi-123"), "cache update must preserve osac_instance_id")
 					return &bcmclient.UpdateResponse{Success: true}, nil
 				})
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)

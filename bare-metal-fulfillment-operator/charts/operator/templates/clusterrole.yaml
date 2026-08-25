@@ -12,6 +12,8 @@ rules:
   - secrets
   verbs:
   - get
+  - list
+  - watch
 - apiGroups:
   - metal3.io
   resources:
