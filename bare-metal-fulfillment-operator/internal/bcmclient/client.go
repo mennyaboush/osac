@@ -385,6 +385,36 @@ func (c *Client) GetDevice(ctx context.Context, hostname string) (*Device, error
 	return &d, nil
 }
 
+// GetCategories returns all node categories from BCM. Used to resolve
+// category-level BMC credentials that a device inherits.
+func (c *Client) GetCategories(ctx context.Context) ([]Category, error) {
+	body, err := c.doJSONCall(ctx, "cmdevice", "getCategories", []any{})
+	if err != nil {
+		return nil, fmt.Errorf("GetCategories: %w", err)
+	}
+
+	var categories []Category
+	if err := json.Unmarshal(body, &categories); err != nil {
+		return nil, fmt.Errorf("GetCategories: failed to parse response: %w", err)
+	}
+	return categories, nil
+}
+
+// GetPartitions returns all partitions from BCM. Used to resolve
+// partition-level BMC credentials that a device inherits.
+func (c *Client) GetPartitions(ctx context.Context) ([]Partition, error) {
+	body, err := c.doJSONCall(ctx, "cmpart", "getPartitions", []any{})
+	if err != nil {
+		return nil, fmt.Errorf("GetPartitions: %w", err)
+	}
+
+	var partitions []Partition
+	if err := json.Unmarshal(body, &partitions); err != nil {
+		return nil, fmt.Errorf("GetPartitions: failed to parse response: %w", err)
+	}
+	return partitions, nil
+}
+
 // UpdateDevice sends a full device object to BCM. The raw JSON must be the
 // complete device as returned by GetDevice, with modifications applied.
 func (c *Client) UpdateDevice(ctx context.Context, deviceRaw json.RawMessage) (*UpdateResponse, error) {

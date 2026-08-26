@@ -33,6 +33,7 @@ const testNamespace = "osac-baremetal"
 
 func newTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
+	Expect(corev1.AddToScheme(s)).To(Succeed())
 	Expect(metal3api.AddToScheme(s)).To(Succeed())
 	return s
 }
@@ -43,7 +44,7 @@ func newTestManager(objects ...client.Object) *Manager {
 		WithObjects(objects...).
 		WithStatusSubresource(&metal3api.BareMetalHost{}).
 		Build()
-	return NewManager(k8sClient, testNamespace)
+	return NewManager(k8sClient, k8sClient, testNamespace)
 }
 
 var _ = Describe("BareMetalHost Manager", func() {
@@ -291,6 +292,109 @@ var _ = Describe("BareMetalHost Manager", func() {
 
 			_, err := mgr.IsBMHReady(ctx, "nonexistent")
 			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	Describe("BMHExists", func() {
+		It("should return true when BMH exists", func() {
+			bmh := &metal3api.BareMetalHost{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node001",
+					Namespace: testNamespace,
+				},
+			}
+			mgr := newTestManager(bmh)
+
+			exists, err := mgr.BMHExists(ctx, "node001")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(exists).To(BeTrue())
+		})
+
+		It("should return false when BMH does not exist", func() {
+			mgr := newTestManager()
+
+			exists, err := mgr.BMHExists(ctx, "nonexistent")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(exists).To(BeFalse())
+		})
+	})
+
+	Describe("EnsureBMCSecret", func() {
+		It("should create a labeled Secret with username and password", func() {
+			mgr := newTestManager()
+
+			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "s3cret")).To(Succeed())
+
+			secret := &corev1.Secret{}
+			Expect(mgr.client.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: "node001-bmc-secret"}, secret)).To(Succeed())
+			Expect(string(secret.Data["username"])).To(Equal("admin"))
+			Expect(string(secret.Data["password"])).To(Equal("s3cret"))
+			Expect(secret.Labels).To(HaveKeyWithValue(bmcSecretManagedByLabel, bmcSecretManagedByValue))
+		})
+
+		It("should update an existing Secret's credentials idempotently", func() {
+			mgr := newTestManager()
+			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "old")).To(Succeed())
+			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "new")).To(Succeed())
+
+			secret := &corev1.Secret{}
+			Expect(mgr.client.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: "node001-bmc-secret"}, secret)).To(Succeed())
+			Expect(string(secret.Data["password"])).To(Equal("new"))
+		})
+
+		It("should refuse to overwrite a pre-existing Secret it does not own", func() {
+			foreign := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node001-bmc-secret",
+					Namespace: testNamespace,
+				},
+				Data: map[string][]byte{"username": []byte("someone"), "password": []byte("else")},
+			}
+			mgr := newTestManager(foreign)
+
+			err := mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "s3cret")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("not operator-managed"))
+
+			// The foreign Secret must be left untouched.
+			secret := &corev1.Secret{}
+			Expect(mgr.client.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: "node001-bmc-secret"}, secret)).To(Succeed())
+			Expect(string(secret.Data["password"])).To(Equal("else"))
+			Expect(secret.Labels).NotTo(HaveKey(bmcSecretManagedByLabel))
+		})
+	})
+
+	Describe("DeleteBMCSecret", func() {
+		It("should delete an operator-managed Secret", func() {
+			mgr := newTestManager()
+			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "s3cret")).To(Succeed())
+
+			Expect(mgr.DeleteBMCSecret(ctx, "node001-bmc-secret")).To(Succeed())
+
+			secret := &corev1.Secret{}
+			err := mgr.client.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: "node001-bmc-secret"}, secret)
+			Expect(err).To(HaveOccurred())
+		})
+
+		It("should NOT delete an admin-created (unlabeled) Secret", func() {
+			adminSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "admin-bmc-secret",
+					Namespace: testNamespace,
+				},
+				Data: map[string][]byte{"username": []byte("admin"), "password": []byte("s3cret")},
+			}
+			mgr := newTestManager(adminSecret)
+
+			Expect(mgr.DeleteBMCSecret(ctx, "admin-bmc-secret")).To(Succeed())
+
+			secret := &corev1.Secret{}
+			Expect(mgr.client.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: "admin-bmc-secret"}, secret)).To(Succeed())
+		})
+
+		It("should be idempotent when the Secret does not exist", func() {
+			mgr := newTestManager()
+			Expect(mgr.DeleteBMCSecret(ctx, "nonexistent")).To(Succeed())
 		})
 	})
 })

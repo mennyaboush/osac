@@ -13,6 +13,7 @@ require (
 	github.com/osac-project/osac/osac-operator/api v0.0.7
 	github.com/prometheus/client_golang v1.24.1
 	github.com/stmcginnis/gofish v0.24.0
+	go.uber.org/mock v0.6.0
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
 	k8s.io/client-go v0.36.3
@@ -72,7 +73,6 @@ require (
 	go.opentelemetry.io/otel/sdk v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
-	go.uber.org/mock v0.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect

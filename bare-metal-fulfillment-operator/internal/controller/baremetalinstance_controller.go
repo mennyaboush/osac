@@ -98,6 +98,10 @@ func NewBareMetalInstanceReconciler(
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=baremetalinstances/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=baremetalinstances/finalizers,verbs=update
 // +kubebuilder:rbac:groups=metal3.io,resources=baremetalhosts,verbs=create;delete;get;list;watch;update;patch
+// NOTE: Secret access is intentionally NOT a cluster-wide rule. The operator
+// only reads/creates BMC credential Secrets in the Metal3 (BMH) namespace, so
+// that permission is granted via a namespace-scoped Role+RoleBinding in the
+// Helm chart (templates/bmc-secret-role.yaml), not this cluster-scoped role.
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=subnets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=networkclasses,verbs=get;list;watch
 

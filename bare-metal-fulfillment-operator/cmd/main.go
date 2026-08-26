@@ -46,6 +46,7 @@ import (
 	osacv1alpha1 "github.com/osac-project/osac/bare-metal-fulfillment-operator/api/v1alpha1"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bcmclient"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bmcdiscovery"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/controller"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/helpers"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/inventory"
@@ -530,11 +531,24 @@ func createBCMInventoryClient(
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse metal3 namespace for BMH manager: %w", err)
 		}
-		bmhMgr = baremetalhost.NewManager(mgr.GetClient(), ns)
+		// Uncached read+write client for BMC credential Secrets: keeps Secret
+		// access off the cluster-wide informer (no list/watch), so the operator
+		// needs only get/create/update/delete on Secrets in the BMH namespace.
+		secretClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme(), Mapper: mgr.GetRESTMapper()})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create uncached Secret client: %w", err)
+		}
+		bmhMgr = baremetalhost.NewManager(mgr.GetClient(), secretClient, ns)
 		setupLog.Info("BMH manager configured", "namespace", ns)
 	}
 
 	client := inventory.NewBCMClient(bcmClient, bmhMgr, inventoryCfg.HostClass)
+
+	discoverer := &bmcdiscovery.GofishDiscoverer{
+		InsecureSkipVerify: bcmCfg.InsecureSkipVerify,
+	}
+	client.SetBMCDiscoverer(discoverer)
+	setupLog.Info("BMC Redfish discoverer configured", "insecureSkipVerify", bcmCfg.InsecureSkipVerify)
 
 	if cw := client.CertWatcher(); cw != nil {
 		if err := mgr.Add(cw); err != nil {
