@@ -219,6 +219,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 			0,
 			0,
 			0,
+			0,
 		)
 	})
 
@@ -238,6 +239,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 					0,
 					-5*time.Second,
 					0,
+					-1*time.Second,
 				)
 			})
 
@@ -246,6 +248,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 				Expect(reconciler.TryLockFailPollIntervalDuration).To(Equal(DefaultTryLockFailPollIntervalDuration))
 				Expect(reconciler.ManagementRecheckIntervalDuration).To(Equal(DefaultManagementRecheckIntervalDuration))
 				Expect(reconciler.ProvisionPollIntervalDuration).To(Equal(DefaultProvisionPollIntervalDuration))
+				Expect(reconciler.HostReadinessPollIntervalDuration).To(Equal(DefaultHostReadinessPollIntervalDuration))
 			})
 		})
 
@@ -264,12 +267,14 @@ var _ = Describe("BareMetalInstance Controller", func() {
 					2*time.Second,
 					15*time.Second,
 					60*time.Second,
+					90*time.Second,
 				)
 
 				Expect(customReconciler.NoFreeHostsPollIntervalDuration).To(Equal(45 * time.Second))
 				Expect(customReconciler.TryLockFailPollIntervalDuration).To(Equal(2 * time.Second))
 				Expect(customReconciler.ManagementRecheckIntervalDuration).To(Equal(15 * time.Second))
 				Expect(customReconciler.ProvisionPollIntervalDuration).To(Equal(60 * time.Second))
+				Expect(customReconciler.HostReadinessPollIntervalDuration).To(Equal(90 * time.Second))
 			})
 		})
 	})
@@ -410,6 +415,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 					return &inventory.Host{
 						InventoryHostID: inventoryHostID,
 						HostClass:       hostClass,
+						Ready:           true,
 					}, nil
 				}
 			})
@@ -426,6 +432,27 @@ var _ = Describe("BareMetalInstance Controller", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(Equal(ctrl.Result{}))
 				Expect(bareMetalInstance.Status.Phase).To(Equal(v1alpha1.BareMetalInstancePhaseProgressing))
+			})
+
+			It("should requeue without setting HostClass when the host is not ready", func() {
+				mockInvClient.assignHostFunc = func(ctx context.Context, inventoryHostID string, bareMetalInstanceID string, labels map[string]string) (*inventory.Host, error) {
+					return &inventory.Host{
+						InventoryHostID: inventoryHostID,
+						HostClass:       hostClass,
+						Ready:           false,
+					}, nil
+				}
+				// When the host is not ready the controller must requeue *before*
+				// writing HostClass — so Update must never be called on this path.
+				mockK8sClient.updateFunc = func(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+					Fail("Update must not be called while the host is not ready")
+					return nil
+				}
+
+				result, err := reconciler.reconcileInventory(ctx, bareMetalInstance)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result.RequeueAfter).To(Equal(reconciler.HostReadinessPollIntervalDuration))
 			})
 		})
 
@@ -1530,7 +1557,7 @@ var _ = Describe("BareMetalInstance Controller", func() {
 				invClient,
 				&mockManagementClient{},
 				nil, nil, nil, nil,
-				0, 0, 0, 0,
+				0, 0, 0, 0, 0,
 			)
 			bmi = &v1alpha1.BareMetalInstance{
 				ObjectMeta: metav1.ObjectMeta{
@@ -1685,6 +1712,7 @@ var _ = Describe("BareMetalInstance network handoff reboot (OSAC-1448)", func() 
 			0,
 			5*time.Second,
 			5*time.Second,
+			0,
 		)
 
 		bareMetalInstance = &v1alpha1.BareMetalInstance{
@@ -1960,6 +1988,7 @@ var _ = Describe("BareMetalInstance network offboard shutdown (OSAC-1448)", func
 			0,
 			5*time.Second,
 			5*time.Second,
+			0,
 		)
 
 		bareMetalInstance = &v1alpha1.BareMetalInstance{
@@ -2142,7 +2171,7 @@ var _ = Describe("BareMetalInstance networking feature gate (OSAC_ENABLE_NETWORK
 				k8sClient, k8sClient.Scheme(),
 				nil, mockMgmtClient,
 				nil, nil, nil, nil,
-				0, 0, 5*time.Second, 5*time.Second,
+				0, 0, 5*time.Second, 5*time.Second, 0,
 			)
 		})
 
@@ -2175,7 +2204,7 @@ var _ = Describe("BareMetalInstance networking feature gate (OSAC_ENABLE_NETWORK
 				k8sClient, k8sClient.Scheme(),
 				nil, mockMgmtClient,
 				nil, &mockProvisioningProvider{}, nil, nil,
-				0, 0, 5*time.Second, 5*time.Second,
+				0, 0, 5*time.Second, 5*time.Second, 0,
 			)
 		})
 

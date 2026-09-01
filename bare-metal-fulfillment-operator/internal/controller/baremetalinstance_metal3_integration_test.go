@@ -85,7 +85,7 @@ func newMetal3Reconciler() *BareMetalInstanceReconciler {
 		nil, // networking provider
 		nil, // IP discovery provider
 		nil, // AAP client
-		0, 0, 0, 0,
+		0, 0, 0, 0, 0,
 	)
 }
 
@@ -314,7 +314,7 @@ var _ = Describe("BareMetalInstance Metal3 Integration", func() {
 				inventory.NewMetal3ClientForTest(k8sClient, metal3TestNS, metal3HostClass),
 				management.NewMetal3ClientForTest(k8sClient, metal3TestNS),
 				nil, nil, nil, nil,
-				0, 0, 0, 0,
+				0, 0, 0, 0, 0,
 			)
 
 			// Allocation (finalizer, find, assign) — no conflict yet.

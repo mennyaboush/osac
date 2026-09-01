@@ -271,10 +271,18 @@ func (c *BCMClient) AssignHost(ctx context.Context, inventoryHostID string, bare
 	if err != nil || device == nil {
 		return nil, err
 	}
+	// Ensure the BareMetalHost exists (idempotent), then report readiness. The
+	// controller keeps the instance in Allocating and requeues until Ready.
 	if err := c.ensureBMHExists(ctx, device, bareMetalInstanceID); err != nil {
 		return nil, err
 	}
-	return c.buildHost(device), nil
+	ready, err := c.bmhManager.IsBMHReady(ctx, device.Hostname)
+	if err != nil {
+		return nil, err
+	}
+	host := c.buildHost(device)
+	host.Ready = ready
+	return host, nil
 }
 
 // reserveDevice fetches the BCM device and reserves it (writes osac_instance_id)

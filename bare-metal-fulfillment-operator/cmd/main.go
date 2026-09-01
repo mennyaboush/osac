@@ -79,6 +79,7 @@ const (
 	envTryLockFailPollInterval   = "OSAC_TRY_LOCK_FAIL_POLL_INTERVAL"
 	envManagementRecheckInterval = "OSAC_MANAGEMENT_RECHECK_INTERVAL"
 	envProvisionPollInterval     = "OSAC_PROVISION_POLL_INTERVAL"
+	envHostReadinessPollInterval = "OSAC_HOST_READINESS_POLL_INTERVAL"
 
 	envAAPURL                       = "OSAC_AAP_URL"
 	envAAPToken                     = "OSAC_AAP_TOKEN"
@@ -483,6 +484,10 @@ func setupBareMetalInstanceController(
 		envProvisionPollInterval,
 		controller.DefaultProvisionPollIntervalDuration,
 	)
+	hostReadinessPollInterval := helpers.GetEnvWithDefault(
+		envHostReadinessPollInterval,
+		controller.DefaultHostReadinessPollIntervalDuration,
+	)
 	maxConcurrentReconciles := helpers.GetEnvWithDefault(
 		envBareMetalInstanceMaxConcurrentReconcile,
 		1,
@@ -502,6 +507,7 @@ func setupBareMetalInstanceController(
 		tryLockFailPollInterval,
 		managementRecheckInterval,
 		provisionPollInterval,
+		hostReadinessPollInterval,
 	).SetupWithManager(mgr, maxConcurrentReconciles); err != nil {
 		return fmt.Errorf("baremetalinstance controller: %w", err)
 	}
@@ -572,6 +578,8 @@ func createBCMInventoryClient(
 		}
 		bmhMgr = baremetalhost.NewManager(mgr.GetClient(), secretClient, ns)
 		setupLog.Info("BMH manager configured", "namespace", ns)
+	} else {
+		return nil, fmt.Errorf("BCM inventory requires Metal3 management backend (got %q)", managementCfg.Type)
 	}
 
 	client := inventory.NewBCMClient(bcmClient, bmhMgr, inventoryCfg.HostClass)

@@ -287,11 +287,14 @@ var _ = Describe("BareMetalHost Manager", func() {
 			Expect(err.Error()).To(ContainSubstring("error status"))
 		})
 
-		It("should return error when BMH not found", func() {
+		It("should return not ready (no error) when the BMH is not found", func() {
+			// A NotFound is treated as not-ready so the readiness poll requeues
+			// instead of erroring on a just-created BMH the cache hasn't seen yet.
 			mgr := newTestManager()
 
-			_, err := mgr.IsBMHReady(ctx, "nonexistent")
-			Expect(err).To(HaveOccurred())
+			ready, err := mgr.IsBMHReady(ctx, "nonexistent")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(ready).To(BeFalse())
 		})
 	})
 

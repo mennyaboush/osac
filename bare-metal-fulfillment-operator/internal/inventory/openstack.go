@@ -348,6 +348,7 @@ func (c *OpenStackClient) assignHost(ctx context.Context, inventoryHostID string
 		HostClass:           c.HostClass,
 		ProvisionState:      node.ProvisionState,
 		ManagedBy:           managedBy,
+		Ready:               true, // Ironic nodes are immediately usable after label assignment
 	}, nil
 }
 

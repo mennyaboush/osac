@@ -290,6 +290,15 @@ func (m *Manager) IsBMHReady(ctx context.Context, name string) (bool, error) {
 
 	bmh := &metal3api.BareMetalHost{}
 	if err := m.client.Get(ctx, client.ObjectKey{Namespace: m.namespace, Name: name}, bmh); err != nil {
+		// IsBMHReady runs right after CreateBMH, so a NotFound here is almost
+		// always the informer cache not having observed the just-created BMH yet.
+		// Treat it as "not ready" so the caller requeues rather than erroring.
+		// It's safe even if the BMH were genuinely absent: ensureBMHExists
+		// re-creates it on the next reconcile before this check runs again.
+		if apierrors.IsNotFound(err) {
+			log.V(1).Info("BareMetalHost not observed yet, treating as not ready", "name", name)
+			return false, nil
+		}
 		return false, fmt.Errorf("failed to get BareMetalHost %s/%s: %w", m.namespace, name, err)
 	}
 

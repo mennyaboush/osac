@@ -39,6 +39,11 @@ type Host struct {
 	HostClass           string
 	ProvisionState      string
 	ManagedBy           string
+	// Ready reports whether the underlying host is ready for provisioning.
+	// Backends managing pre-existing resources (Metal3, OpenStack) always set
+	// true; the BCM backend sets false until the on-demand BareMetalHost has
+	// completed Metal3 registration/inspection.
+	Ready bool
 }
 
 // HostNIC represents a physical network interface on an inventory host.

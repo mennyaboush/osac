@@ -61,6 +61,7 @@ type BareMetalInstanceReconciler struct {
 	TryLockFailPollIntervalDuration   time.Duration
 	ManagementRecheckIntervalDuration time.Duration
 	ProvisionPollIntervalDuration     time.Duration
+	HostReadinessPollIntervalDuration time.Duration
 }
 
 // +kubebuilder:rbac:groups=osac.openshift.io,resources=subnets,verbs=get;list;watch
@@ -81,6 +82,7 @@ func NewBareMetalInstanceReconciler(
 	tryLockFailPollIntervalDuration time.Duration,
 	managementRecheckIntervalDuration time.Duration,
 	provisionPollIntervalDuration time.Duration,
+	hostReadinessPollIntervalDuration time.Duration,
 ) *BareMetalInstanceReconciler {
 	if noFreeHostsPollIntervalDuration <= 0 {
 		noFreeHostsPollIntervalDuration = DefaultNoFreeHostsPollIntervalDuration
@@ -98,6 +100,10 @@ func NewBareMetalInstanceReconciler(
 		provisionPollIntervalDuration = DefaultProvisionPollIntervalDuration
 	}
 
+	if hostReadinessPollIntervalDuration <= 0 {
+		hostReadinessPollIntervalDuration = DefaultHostReadinessPollIntervalDuration
+	}
+
 	return &BareMetalInstanceReconciler{
 		Client:                            client,
 		Scheme:                            scheme,
@@ -111,6 +117,7 @@ func NewBareMetalInstanceReconciler(
 		AAPClient:                         aapClient,
 		ManagementRecheckIntervalDuration: managementRecheckIntervalDuration,
 		ProvisionPollIntervalDuration:     provisionPollIntervalDuration,
+		HostReadinessPollIntervalDuration: hostReadinessPollIntervalDuration,
 	}
 }
 
@@ -332,6 +339,16 @@ func (r *BareMetalInstanceReconciler) reconcileInventory(ctx context.Context, ba
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
+	}
+
+	// The host is reserved but the inventory backend may report it as not yet
+	// ready for provisioning (e.g. underlying hardware still completing
+	// registration/inspection). Keep the instance in Allocating (don't set
+	// HostClass/Allocated yet) and requeue until the host reports Ready.
+	if !inventoryHost.Ready {
+		log.V(1).Info("Host reserved but not ready yet, requeuing",
+			"InventoryHostID", bareMetalInstance.Spec.ExternalHostID)
+		return ctrl.Result{RequeueAfter: r.HostReadinessPollIntervalDuration}, nil
 	}
 
 	bareMetalInstance.Spec.HostClass = inventoryHost.HostClass
