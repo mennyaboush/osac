@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 # extra_values keys the operator is allowed to write on a BCM device. Anything
 # else — and in particular anything tenant-identifying — must not be present.
 _ALLOWED_EXTRA_VALUE_KEYS: frozenset[str] = frozenset({"resource_class", "osac_instance_id", "osac_bmc_address"})
-_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = ("name", "namespace", "org", "tenant", "owner")
 
 # Insecure TLS: the simulator serves a self-signed cert and the operator itself
 # connects with insecureSkipVerify — the test mirrors that.
@@ -52,8 +51,8 @@ def _bcm_devices(base_url: str) -> list[dict[str, Any]]:
         return json.load(resp)
 
 
-def _assigned_devices(base_url: str) -> list[dict[str, Any]]:
-    return [d for d in _bcm_devices(base_url) if d.get("extra_values", {}).get("osac_instance_id")]
+def _device(base_url: str, hostname: str) -> dict[str, Any] | None:
+    return next((d for d in _bcm_devices(base_url) if d.get("hostname") == hostname), None)
 
 
 @pytest.mark.sanity
@@ -67,9 +66,6 @@ def test_baremetal_instance_bcm_host_release(
     ssh_public_key: str,
     bcm_simulator_url: str,
 ) -> None:
-    # Precondition: no host is assigned in BCM before we start.
-    assert _assigned_devices(bcm_simulator_url) == [], "a BCM host was already assigned before the test started"
-
     name = f"e2e-bcm-{test_run_id}"
     bmi_id: str = cli.create_baremetal_instance(name=name, catalog_item=catalog_item, ssh_key=ssh_public_key)
     bmh_ns = ""
@@ -91,20 +87,24 @@ def test_baremetal_instance_bcm_host_release(
         consumer_ref: str = k8s_hub_client.get_bmh_consumer_ref(name=bmh_name, bmh_namespace=bmh_ns)
         assert consumer_ref != "", f"BMH {bmh_name} has no consumerRef after allocation"
 
-        # BCM-specific: exactly one host is now marked assigned in BCM...
-        assigned = _assigned_devices(bcm_simulator_url)
-        assert len(assigned) == 1, f"expected exactly one assigned BCM host, got {len(assigned)}"
-        extra_values: dict[str, Any] = assigned[0].get("extra_values", {})
-        assert extra_values.get("osac_instance_id"), "assigned BCM host is missing osac_instance_id"
+        # BCM-specific: correlate to THIS instance's host. The operator names the
+        # BMH after the BCM LiteNode hostname (inventory/bcm.go: Host.Name =
+        # device.Hostname), so bmh_name is the BCM device to inspect. Correlating by
+        # host keeps the assertions correct even when other bmaas tests run in
+        # parallel against the same shared simulator.
+        device = _device(bcm_simulator_url, bmh_name)
+        assert device is not None, f"BCM device {bmh_name} not found in simulator"
+        extra_values: dict[str, Any] = device.get("extra_values", {})
+        assert extra_values.get("osac_instance_id"), f"BCM host {bmh_name} missing osac_instance_id after assignment"
 
-        # ...and it carries no tenant-identifying data (name/namespace/org/tenant),
-        # neither as extra_values keys nor as values leaking the instance name.
+        # No tenant-identifying data leaked into BCM (OSAC-3775 AC#7): the only keys
+        # allowed are resource_class / osac_instance_id / osac_bmc_address, and the
+        # instance name must not appear anywhere in extra_values.
         unexpected_keys = set(extra_values) - _ALLOWED_EXTRA_VALUE_KEYS
         assert not unexpected_keys, f"unexpected extra_values keys in BCM (possible data leak): {unexpected_keys}"
-        for key, value in extra_values.items():
-            lowered = f"{key}={value}".lower()
-            assert not any(s in key.lower() for s in _FORBIDDEN_SUBSTRINGS), f"tenant-identifying key in BCM: {key}"
-            assert name.lower() not in lowered, f"instance name leaked into BCM extra_values: {key}={value}"
+        assert name.lower() not in json.dumps(extra_values).lower(), (
+            f"instance name leaked into BCM extra_values: {extra_values}"
+        )
 
         # Deprovision -> host released back to the BCM pool.
         cli.delete_baremetal_instance(uuid=bmi_id)
@@ -112,8 +112,13 @@ def test_baremetal_instance_bcm_host_release(
         wait_for_bmi_grpc_removal(grpc=grpc, uuid=bmi_id)
         wait_for_bmh_available(k8s=k8s_hub_client, name=bmh_name, bmh_namespace=bmh_ns)
 
-        # BCM-specific: no host carries osac_instance_id anymore — free for re-assignment.
-        assert _assigned_devices(bcm_simulator_url) == [], "BCM host was not released after instance deletion"
+        # BCM-specific: the host is released (still present, osac_instance_id cleared)
+        # so it can be re-assigned from the pool.
+        released = _device(bcm_simulator_url, bmh_name)
+        assert released is not None, f"BCM device {bmh_name} vanished; expected it released, not removed"
+        assert not released.get("extra_values", {}).get("osac_instance_id"), (
+            f"BCM host {bmh_name} still marked assigned after deletion"
+        )
     except BaseException:
         bmi_cr: str = k8s_hub_client.get_baremetal_instance_name(uuid=bmi_id, checked=False)
         if bmi_cr:
