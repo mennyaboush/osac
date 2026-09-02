@@ -23,6 +23,19 @@ def bmh_namespace() -> str:
 
 
 @pytest.fixture(scope="session")
+def bcm_simulator_url() -> str:
+    """Base URL of the BCM simulator's admin API (set by setup-bcm-simulator.sh).
+
+    Only present when the E2E run configured the BCM inventory backend; tests
+    that request this fixture skip on the Metal3 backend.
+    """
+    url = env("BCM_SIMULATOR_URL", "")
+    if not url:
+        pytest.skip("BCM_SIMULATOR_URL not set — BCM-simulator tests run only on the BCM backend")
+    return url
+
+
+@pytest.fixture(scope="session")
 def test_run_id() -> str:
     return str(uuid.uuid4())[:8]
 
