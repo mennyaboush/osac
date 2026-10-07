@@ -1112,6 +1112,8 @@ var _ = Describe("update", func() {
 			hubNamespace = "test-ns"
 		)
 
+		hostSelector := map[string]string{"hostType": "compute"}
+
 		existingCR := &bmfov1alpha1.BareMetalInstance{
 			ObjectMeta: metav1.ObjectMeta{
 				Namespace: hubNamespace,
@@ -1174,11 +1176,13 @@ var _ = Describe("update", func() {
 			Name:      "bmi-existing",
 		}, &updatedCR)
 		Expect(err).ToNot(HaveOccurred())
+		Expect(updatedCR.Spec.Selector.HostSelector).To(Equal(hostSelector))
 		Expect(updatedCR.Spec.ExternalHostID).To(Equal("host-42"),
 			"ExternalHostID must be preserved — it is managed by the bare-metal-fulfillment-operator")
 		Expect(updatedCR.Spec.HostClass).To(Equal("openstack"),
 			"HostClass must be preserved — it is managed by the bare-metal-fulfillment-operator")
 	})
+
 })
 
 var _ = Describe("delete", func() {
