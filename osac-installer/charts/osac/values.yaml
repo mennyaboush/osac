@@ -469,6 +469,8 @@ bmf:
     allowInsecureHTTP: false
   metal3:
     enabled: false
+    # For NetBox, dedicate this namespace to BMHs and their BMC Secrets and label it
+    # osac.openshift.io/bmh-secret-namespace=true before installing.
     namespace: ""
     hostClass: "metal3"
 
