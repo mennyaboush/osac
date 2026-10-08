@@ -192,6 +192,9 @@ assert_helm_failure "netbox.enabled and bcm.enabled are mutually exclusive" \
 assert_helm_failure "netbox.url uses HTTP" \
   helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
   --set-string netbox.url=http://netbox.example.test
+assert_helm_failure "secretAPI.url must use HTTPS when NetBox is enabled" \
+  helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
+  --set-string secretAPI.url=http://fulfillment-internal-api:8001
 helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
   --set-string netbox.url=http://netbox.example.test \
   --set netbox.allowInsecureHTTP=true > "$TMP_DIR/netbox-http-render.yaml"
