@@ -26,6 +26,9 @@
 {{- if not .Values.secretAPI.tokenFile }}
 {{- fail "secretAPI.tokenFile is required when netbox.enabled is true" }}
 {{- end }}
+{{- if not (hasPrefix "https://" (lower .Values.secretAPI.url)) }}
+{{- fail "secretAPI.url must use HTTPS when NetBox is enabled" }}
+{{- end }}
 {{- $netboxURL := lower .Values.netbox.url }}
 {{- if and (hasPrefix "http://" $netboxURL) (not .Values.netbox.allowInsecureHTTP) }}
 {{- fail "netbox.url uses HTTP; set netbox.allowInsecureHTTP=true to allow HTTP" }}
