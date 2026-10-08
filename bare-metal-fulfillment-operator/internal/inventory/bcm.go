@@ -54,19 +54,6 @@ type BCMAPI interface {
 	UpdateDevice(ctx context.Context, deviceRaw json.RawMessage) (*bcmclient.UpdateResponse, error)
 }
 
-// BMHLifecycleManager abstracts BareMetalHost CR operations for testability.
-// Satisfied by *baremetalhost.Manager.
-type BMHLifecycleManager interface {
-	CreateBMH(ctx context.Context, params baremetalhost.CreateParams) error
-	DeleteBMH(ctx context.Context, name string) error
-	BMHExists(ctx context.Context, name string) (bool, error)
-	IsBMHReady(ctx context.Context, name string) (bool, error)
-	EnsureBMCSecret(ctx context.Context, name, username, password string) error
-	DeleteBMCSecret(ctx context.Context, name string) error
-	GetHardwareNICs(ctx context.Context, name string) ([]string, error)
-	Namespace() string
-}
-
 // BMCDiscoverer resolves BMC system paths via Redfish. Satisfied by
 // *bmcdiscovery.GofishDiscoverer; defined here so tests can substitute
 // a mock without making real Redfish connections.
