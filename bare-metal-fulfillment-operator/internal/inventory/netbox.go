@@ -83,26 +83,13 @@ type NetBoxClient struct {
 }
 
 var (
-	_ Client        = (*NetBoxClient)(nil)
-	_ NewClientFunc = NewNetBoxClient
+	_ Client = (*NetBoxClient)(nil)
 )
 
-func init() {
-	newClientFuncs["netbox"] = NewNetBoxClient
-}
-
-// NewNetBoxClient constructs the secure NetBox API dependency from mounted
-// configuration. Inventory allocation operations are implemented separately.
-func NewNetBoxClient(_ context.Context, config *Config) (Client, error) {
+// NewNetBoxAPI constructs the secure NetBox API dependency from mounted configuration.
+func NewNetBoxAPI(config *Config) (NetBoxAPI, error) {
 	if config == nil {
 		return nil, fmt.Errorf("netbox inventory config is required")
-	}
-	if config.HostClass != netBoxHostClass {
-		return nil, fmt.Errorf(
-			"NetBox backend requires inventory.hostClass=%s (got %q)",
-			netBoxHostClass,
-			config.HostClass,
-		)
 	}
 	netBoxConfig, err := ParseNetBoxOptions(config.Options)
 	if err != nil {
@@ -118,21 +105,16 @@ func NewNetBoxClient(_ context.Context, config *Config) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &NetBoxClient{api: api, hostClass: config.HostClass}, nil
+	return api, nil
 }
 
-// SetBMHLifecycleManager injects the existing Metal3 lifecycle manager during
-// operator startup. NetBox devices are inventory records; Metal3 remains
-// responsible for the corresponding BareMetalHost and runtime BMC Secret.
-func (c *NetBoxClient) SetBMHLifecycleManager(manager baremetalhost.BMHLifecycleManager) error {
-	if c == nil {
-		return fmt.Errorf("NetBox inventory client is required")
+// NewNetBoxClient creates a NetBox inventory client with injected dependencies.
+func NewNetBoxClient(api NetBoxAPI, bmhManager baremetalhost.BMHLifecycleManager, hostClass string) *NetBoxClient {
+	return &NetBoxClient{
+		api:        api,
+		bmhManager: bmhManager,
+		hostClass:  hostClass,
 	}
-	if manager == nil {
-		return fmt.Errorf("NetBox backend requires a Metal3 BMH manager")
-	}
-	c.bmhManager = manager
-	return nil
 }
 
 func (*NetBoxClient) FindFreeHost(_ context.Context, _ map[string]string) (*Host, error) {

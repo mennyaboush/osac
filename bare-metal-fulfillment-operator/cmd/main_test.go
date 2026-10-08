@@ -209,7 +209,7 @@ var _ = Describe("createInventoryClient", func() {
 		Expect(inventoryClient).To(BeNil())
 	})
 
-	It("constructs the registered NetBox backend with Metal3 startup configuration", func() {
+	It("constructs a NetBox backend with Metal3 startup configuration", func() {
 		tokenFile := filepath.Join(GinkgoT().TempDir(), "netbox-token")
 		Expect(os.WriteFile(tokenFile, []byte("test-token\n"), 0o600)).To(Succeed())
 
