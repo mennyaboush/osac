@@ -419,13 +419,10 @@ endif
 .PHONY: sync-charts
 sync-charts: helm-deps ## Rebuild chart dependencies (alias for helm-deps)
 
-.PHONY: helm-osac-deps
-helm-osac-deps: ## Build OSAC chart dependencies
+.PHONY: helm-deps
+helm-deps: ## Build Helm chart dependencies
 	rm -rf $(OSAC_CHART)/charts
 	helm dependency build $(OSAC_CHART)
-
-.PHONY: helm-deps
-helm-deps: helm-osac-deps ## Build Helm chart dependencies
 	helm dependency build charts/osac-devstack
 
 .PHONY: helm-lint
@@ -554,7 +551,7 @@ dev-full-render-test: helm-deps ## Check dev-full TLS and Helm post-rendering
 	./scripts/test-dev-full-render.sh
 
 .PHONY: bmf-netbox-render-test
-bmf-netbox-render-test: helm-osac-deps ## Check NetBox, Metal3 management, and Secret API Helm wiring
+bmf-netbox-render-test: helm-deps ## Check NetBox, Metal3 management, and Secret API Helm wiring
 	bash scripts/test-bmf-netbox-render.sh
 
 .PHONY: helm-validate
