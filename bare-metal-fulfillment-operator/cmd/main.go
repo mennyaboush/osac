@@ -521,8 +521,11 @@ func createInventoryClient(
 	managementCfg *management.Config,
 	mgr ctrl.Manager,
 ) (inventory.Client, error) {
-	if inventoryCfg.Type == "bcm" {
+	switch inventoryCfg.Type {
+	case "bcm":
 		return createBCMInventoryClient(ctx, inventoryCfg, managementCfg, mgr)
+	case "netbox":
+		return createNetBoxInventoryClient(ctx, inventoryCfg, managementCfg, mgr)
 	}
 
 	inventoryClient, err := inventory.NewClient(ctx, inventoryCfg)
@@ -533,6 +536,58 @@ func createInventoryClient(
 		return nil, fmt.Errorf("unsupported inventory type %q", inventoryCfg.Type)
 	}
 	return inventoryClient, nil
+}
+
+const metal3Backend = "metal3"
+
+func validateNetBoxManagementConfig(managementCfg *management.Config) error {
+	if managementCfg == nil || managementCfg.Type != metal3Backend {
+		return fmt.Errorf("NetBox backend requires management.type=%s", metal3Backend)
+	}
+	return nil
+}
+
+func createNetBoxInventoryClient(
+	ctx context.Context,
+	inventoryCfg *inventory.Config,
+	managementCfg *management.Config,
+	mgr ctrl.Manager,
+) (inventory.Client, error) {
+	if err := validateNetBoxManagementConfig(managementCfg); err != nil {
+		return nil, err
+	}
+
+	bmhManager, err := createMetal3BMHManager(managementCfg, mgr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure Metal3 BMH manager for NetBox: %w", err)
+	}
+
+	netBoxClient, err := createNetBoxAdapter(ctx, inventoryCfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := netBoxClient.SetBMHLifecycleManager(bmhManager); err != nil {
+		return nil, fmt.Errorf("failed to configure NetBox Metal3 manager: %w", err)
+	}
+	setupLog.Info("BMH manager configured", "namespace", bmhManager.Namespace())
+
+	return netBoxClient, nil
+}
+
+func createNetBoxAdapter(ctx context.Context, inventoryCfg *inventory.Config) (*inventory.NetBoxClient, error) {
+	inventoryClient, err := inventory.NewClient(ctx, inventoryCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create inventory client: %w", err)
+	}
+	if inventoryClient == nil {
+		return nil, fmt.Errorf("unsupported inventory type %q", inventoryCfg.Type)
+	}
+
+	netBoxClient, ok := inventoryClient.(*inventory.NetBoxClient)
+	if !ok {
+		return nil, fmt.Errorf("NetBox inventory factory returned unexpected client type %T", inventoryClient)
+	}
+	return netBoxClient, nil
 }
 
 func createBCMInventoryClient(
@@ -564,24 +619,18 @@ func createBCMInventoryClient(
 		return nil, fmt.Errorf("failed to create bcm client: %w", err)
 	}
 
-	var bmhMgr *baremetalhost.Manager
-	if managementCfg.Type == "metal3" {
-		ns, err := management.ParseMetal3ManagementNamespace(managementCfg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse metal3 namespace for BMH manager: %w", err)
+	if managementCfg == nil || managementCfg.Type != metal3Backend {
+		managementType := ""
+		if managementCfg != nil {
+			managementType = managementCfg.Type
 		}
-		// Uncached read+write client for BMC credential Secrets: keeps Secret
-		// access off the cluster-wide informer (no list/watch), so the operator
-		// needs only get/create/update/delete on Secrets in the BMH namespace.
-		secretClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme(), Mapper: mgr.GetRESTMapper()})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create uncached Secret client: %w", err)
-		}
-		bmhMgr = baremetalhost.NewManager(mgr.GetClient(), secretClient, ns)
-		setupLog.Info("BMH manager configured", "namespace", ns)
-	} else {
-		return nil, fmt.Errorf("BCM inventory requires Metal3 management backend (got %q)", managementCfg.Type)
+		return nil, fmt.Errorf("BCM inventory requires Metal3 management backend (got %q)", managementType)
 	}
+	bmhMgr, err := createMetal3BMHManager(managementCfg, mgr)
+	if err != nil {
+		return nil, err
+	}
+	setupLog.Info("BMH manager configured", "namespace", bmhMgr.Namespace())
 
 	client := inventory.NewBCMClient(bcmClient, bmhMgr, inventoryCfg.HostClass)
 
@@ -599,4 +648,27 @@ func createBCMInventoryClient(
 	}
 
 	return client, nil
+}
+
+func createMetal3BMHManager(
+	managementCfg *management.Config,
+	mgr ctrl.Manager,
+) (*baremetalhost.Manager, error) {
+	ns, err := management.ParseMetal3ManagementNamespace(managementCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse metal3 namespace for BMH manager: %w", err)
+	}
+	if mgr == nil {
+		return nil, fmt.Errorf("kubernetes manager is required to create Metal3 BMH manager")
+	}
+
+	// Keep BMC credential Secret access off the cluster-wide informer. The
+	// uncached client avoids Secret list/watch permissions and limits access to
+	// the operations performed by the BMH manager.
+	secretClient, err := client.New(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme(), Mapper: mgr.GetRESTMapper()})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create uncached Secret client: %w", err)
+	}
+
+	return baremetalhost.NewManager(mgr.GetClient(), secretClient, ns), nil
 }
