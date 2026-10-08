@@ -51,14 +51,16 @@ func TestParseNetBoxOptions(t *testing.T) {
 		{
 			name: "valid options",
 			options: map[string]any{"netbox": map[string]any{
-				"url":       "https://netbox.example.test/",
-				"tokenFile": "/var/run/secrets/netbox/token",
-				"caFile":    "/var/run/secrets/netbox/ca.crt",
+				"url":               "https://netbox.example.test/",
+				"tokenFile":         "/var/run/secrets/netbox/token",
+				"caFile":            "/var/run/secrets/netbox/ca.crt",
+				"allowInsecureHTTP": true,
 			}},
 			want: &NetBoxClientConfig{
-				URL:       "https://netbox.example.test/",
-				TokenFile: "/var/run/secrets/netbox/token",
-				CAFile:    "/var/run/secrets/netbox/ca.crt",
+				URL:               "https://netbox.example.test/",
+				TokenFile:         "/var/run/secrets/netbox/token",
+				CAFile:            "/var/run/secrets/netbox/ca.crt",
+				AllowInsecureHTTP: true,
 			},
 		},
 	}
@@ -146,7 +148,7 @@ func TestNewNetBoxClientRejectsInvalidConfiguration(t *testing.T) {
 				"url":       "http://netbox.example.test",
 				"tokenFile": "/unused/token",
 			}}},
-			wantErr: "HTTPS origin",
+			wantErr: "NetBox HTTP endpoints require AllowInsecureHTTP",
 		},
 		{
 			name: "unreadable token file",
