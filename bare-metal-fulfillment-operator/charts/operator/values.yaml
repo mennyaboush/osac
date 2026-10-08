@@ -64,5 +64,7 @@ bcm:
 
 metal3:
   enabled: false
+  # For NetBox, use a namespace dedicated to BareMetalHosts and BMC Secrets.
+  # The manager can get/create/update/delete all Secrets in that namespace.
   namespace: ""
   hostClass: "metal3"
