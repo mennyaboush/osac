@@ -525,7 +525,7 @@ func createInventoryClient(
 	case "bcm":
 		return createBCMInventoryClient(ctx, inventoryCfg, managementCfg, mgr)
 	case "netbox":
-		return createNetBoxInventoryClient(ctx, inventoryCfg, managementCfg, mgr)
+		return createNetBoxInventoryClient(inventoryCfg, managementCfg, mgr)
 	}
 
 	inventoryClient, err := inventory.NewClient(ctx, inventoryCfg)
@@ -548,11 +548,17 @@ func validateNetBoxManagementConfig(managementCfg *management.Config) error {
 }
 
 func createNetBoxInventoryClient(
-	ctx context.Context,
 	inventoryCfg *inventory.Config,
 	managementCfg *management.Config,
 	mgr ctrl.Manager,
 ) (inventory.Client, error) {
+	if inventoryCfg.HostClass != metal3Backend {
+		return nil, fmt.Errorf(
+			"NetBox backend requires inventory.hostClass=%s (got %q)",
+			metal3Backend,
+			inventoryCfg.HostClass,
+		)
+	}
 	if err := validateNetBoxManagementConfig(managementCfg); err != nil {
 		return nil, err
 	}
@@ -562,32 +568,13 @@ func createNetBoxInventoryClient(
 		return nil, fmt.Errorf("failed to configure Metal3 BMH manager for NetBox: %w", err)
 	}
 
-	netBoxClient, err := createNetBoxAdapter(ctx, inventoryCfg)
-	if err != nil {
-		return nil, err
-	}
-	if err := netBoxClient.SetBMHLifecycleManager(bmhManager); err != nil {
-		return nil, fmt.Errorf("failed to configure NetBox Metal3 manager: %w", err)
-	}
-	setupLog.Info("BMH manager configured", "namespace", bmhManager.Namespace())
-
-	return netBoxClient, nil
-}
-
-func createNetBoxAdapter(ctx context.Context, inventoryCfg *inventory.Config) (*inventory.NetBoxClient, error) {
-	inventoryClient, err := inventory.NewClient(ctx, inventoryCfg)
+	netBoxAPI, err := inventory.NewNetBoxAPI(inventoryCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create inventory client: %w", err)
 	}
-	if inventoryClient == nil {
-		return nil, fmt.Errorf("unsupported inventory type %q", inventoryCfg.Type)
-	}
+	setupLog.Info("BMH manager configured", "namespace", bmhManager.Namespace())
 
-	netBoxClient, ok := inventoryClient.(*inventory.NetBoxClient)
-	if !ok {
-		return nil, fmt.Errorf("NetBox inventory factory returned unexpected client type %T", inventoryClient)
-	}
-	return netBoxClient, nil
+	return inventory.NewNetBoxClient(netBoxAPI, bmhManager, inventoryCfg.HostClass), nil
 }
 
 func createBCMInventoryClient(
