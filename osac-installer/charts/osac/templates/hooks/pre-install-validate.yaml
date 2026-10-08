@@ -48,15 +48,15 @@ spec:
             echo "Some components (PostgreSQL, Keycloak) may fail to create PVCs."
           fi
 
-          {{- if .Values.bmf.metal3.enabled }}
+          {{- if or .Values.bmf.metal3.enabled .Values.bmf.netbox.enabled }}
           # Check that Metal3 BareMetalHost CRD exists
           echo "Checking for Metal3 BareMetalHost CRD..."
           if kubectl get crd baremetalhosts.metal3.io >/dev/null; then
             echo "  BareMetalHost CRD found."
           else
             echo "ERROR: BareMetalHost CRD (baremetalhosts.metal3.io) not found."
-            echo "Metal3 backend is configured but BareMetalOperator is not installed."
-            echo "Install BareMetalOperator before deploying OSAC with Metal3 backend."
+            echo "Metal3 BMH management is configured but BareMetalOperator is not installed."
+            echo "Install BareMetalOperator before deploying OSAC with Metal3 or NetBox inventory."
             exit 1
           fi
 
@@ -110,7 +110,7 @@ rules:
 - apiGroups: ["storage.k8s.io"]
   resources: ["storageclasses"]
   verbs: ["list"]
-{{- if .Values.bmf.metal3.enabled }}
+{{- if or .Values.bmf.metal3.enabled .Values.bmf.netbox.enabled }}
 - apiGroups: ["metal3.io"]
   resources: ["provisionings"]
   verbs: ["list"]

@@ -560,8 +560,13 @@ fulfillment-trust-render-test: helm-deps ## Check verified fulfillment transport
 dev-full-render-test: helm-deps ## Check dev-full TLS and Helm post-rendering
 	./scripts/test-dev-full-render.sh
 
+.PHONY: bmf-netbox-render-test
+bmf-netbox-render-test: ## Check NetBox, Metal3 management, and Secret API Helm wiring
+	helm dependency build $(OSAC_CHART)
+	bash scripts/test-bmf-netbox-render.sh
+
 .PHONY: helm-validate
-helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test dev-full-render-test ## Validate all charts (lint + template)
+helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test dev-full-render-test bmf-netbox-render-test ## Validate all charts (lint + template)
 	@for d in values/*/; do \
 		infra="$${d}infra.yaml"; \
 		[ -f "$$infra" ] && echo "Validating $$infra..." && \
