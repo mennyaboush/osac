@@ -41,20 +41,8 @@ METAL3_RENDER="$TMP_DIR/metal3-render.yaml"
 BCM_RENDER="$TMP_DIR/bcm-render.yaml"
 OSAC_RENDER="$TMP_DIR/osac-netbox-render.yaml"
 ERROR_OUTPUT="$TMP_DIR/helm-error.log"
-
-assert_helm_failure() {
-  expected=$1
-  shift
-  if "$@" >/dev/null 2>"$ERROR_OUTPUT"; then
-    printf 'Helm unexpectedly accepted invalid values; expected: %s\n' "$expected" >&2
-    exit 1
-  fi
-  if ! rg -Fq "$expected" "$ERROR_OUTPUT"; then
-    printf 'Helm failed without the expected error: %s\n' "$expected" >&2
-    cat "$ERROR_OUTPUT" >&2
-    exit 1
-  fi
-}
+HELM_ERROR_FILE=$ERROR_OUTPUT
+source "$SCRIPT_DIR/helm-test-helpers.sh"
 
 helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" > "$NETBOX_RENDER"
 python3 - "$NETBOX_RENDER" <<'PY'
@@ -239,11 +227,100 @@ management = next(
 assert "type: metal3" in management
 assert 'namespace: "host-inventory"' in management
 assert "Checking for Metal3 BareMetalHost CRD..." in render
+assert "kubectl get provisioning provisioning-configuration" in render
+assert "BMF_BMH_NAMESPACE" in render
+assert "osac\\.openshift\\.io/bmh-secret-namespace" in render
+assert "Label namespace $BMF_BMH_NAMESPACE with osac.openshift.io/bmh-secret-namespace=true." in render
+
+provisioning_role = next(
+    doc for doc in documents
+    if "kind: ClusterRole" in doc and 'resources: ["provisionings"]' in doc
+)
+assert 'resourceNames: ["provisioning-configuration"]' in provisioning_role
+assert 'verbs: ["get"]' in provisioning_role
+
+namespace_role = next(
+    doc for doc in documents
+    if "kind: ClusterRole" in doc and 'resources: ["namespaces"]' in doc
+)
+assert 'resourceNames: ["host-inventory"]' in namespace_role
+assert 'verbs: ["get"]' in namespace_role
 PY
+
+python3 - "$OSAC_RENDER" "$TMP_DIR/pre-install-validate.sh" <<'PY'
+import sys
+
+render = open(sys.argv[1], encoding="utf-8").read()
+job = next(
+    doc for doc in render.split("\n---\n")
+    if "kind: Job" in doc and "name: osac-pre-install-validate" in doc
+)
+lines = job.splitlines()
+script_start = next(i for i, line in enumerate(lines) if line.strip() == "- |")
+script_lines = []
+for line in lines[script_start + 1:]:
+    if line and not line.startswith("          "):
+        break
+    script_lines.append(line[10:] if line else "")
+
+with open(sys.argv[2], "w", encoding="utf-8") as script:
+    script.write("\n".join(script_lines) + "\n")
+PY
+
+mkdir "$TMP_DIR/mock-bin"
+cat > "$TMP_DIR/mock-bin/kubectl" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1" == get && "$2" == crd ]]; then
+  exit 0
+fi
+if [[ "$1" == get && "$2" == sc ]]; then
+  echo default
+  exit 0
+fi
+if [[ "$1" == get && "$2" == provisioning && "$3" == provisioning-configuration ]]; then
+  printf '%s' "$MOCK_WATCH_ALL_NAMESPACES"
+  exit 0
+fi
+if [[ "$1" == get && "$2" == namespace && "$3" == host-inventory ]]; then
+  if [[ "$MOCK_NAMESPACE_LABEL" == true ]]; then
+    echo true
+  fi
+  exit 0
+fi
+
+echo "Unexpected kubectl call: $*" >&2
+exit 1
+SH
+chmod +x "$TMP_DIR/mock-bin/kubectl"
+
+if MOCK_NAMESPACE_LABEL=true MOCK_WATCH_ALL_NAMESPACES=true BMF_BMH_NAMESPACE=host-inventory \
+  PATH="$TMP_DIR/mock-bin:$PATH" /bin/sh "$TMP_DIR/pre-install-validate.sh" \
+  > "$TMP_DIR/hook-success.log" 2>&1; then
+  :
+else
+  cat "$TMP_DIR/hook-success.log" >&2
+  echo "Pre-install validation rejected a labeled NetBox BMH namespace." >&2
+  exit 1
+fi
+
+if MOCK_NAMESPACE_LABEL=missing MOCK_WATCH_ALL_NAMESPACES=true BMF_BMH_NAMESPACE=host-inventory \
+  PATH="$TMP_DIR/mock-bin:$PATH" /bin/sh "$TMP_DIR/pre-install-validate.sh" \
+  > "$TMP_DIR/hook-missing-label.log" 2>&1; then
+  echo "Pre-install validation accepted an unlabeled NetBox BMH namespace." >&2
+  exit 1
+fi
+rg -Fq "Label namespace host-inventory with osac.openshift.io/bmh-secret-namespace=true." \
+  "$TMP_DIR/hook-missing-label.log"
 
 assert_helm_failure "bmf.netbox.enabled and bmf.testBackend.metal3.enabled cannot both be true" \
   helm template osac "$OSAC_CHART" --values "$OSAC_CHART/ci/default-values.yaml" \
   --values "$TMP_DIR/osac-netbox-values.yaml" \
   --set bmf.testBackend.metal3.enabled=true
+assert_helm_failure "validation.enabled must be true when bmf.netbox.enabled is true" \
+  helm template osac "$OSAC_CHART" --values "$OSAC_CHART/ci/default-values.yaml" \
+  --values "$TMP_DIR/osac-netbox-values.yaml" \
+  --set validation.enabled=false
 
 echo "BMF NetBox Helm render checks passed."

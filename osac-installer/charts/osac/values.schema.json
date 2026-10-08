@@ -2262,7 +2262,7 @@
             },
             "namespace": {
               "type": "string",
-              "description": "Kubernetes namespace where BareMetalHost CRs are located. For NetBox, use a dedicated namespace: BMF can get/create/update/delete all Secrets there to manage per-host BMC credentials."
+              "description": "Kubernetes namespace where BareMetalHost CRs are located. For NetBox, use a dedicated namespace for BMHs and BMC Secrets and label it osac.openshift.io/bmh-secret-namespace=true; the installer validates this before granting BMF Secret access."
             },
             "hostClass": {
               "type": "string",

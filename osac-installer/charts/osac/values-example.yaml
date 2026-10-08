@@ -406,7 +406,9 @@ bmf:
 # NetBox inventory with Metal3 BMH management. metal3.enabled must remain
 # false in this mode; set metal3.namespace to the BMH namespace above.
 # Use a dedicated namespace for BMHs and BMC Secrets: BMF can get/create/update/
-# delete all Secrets there to materialize per-host credentials.
+# delete all Secrets there to materialize per-host credentials. Before installing,
+# label that namespace osac.openshift.io/bmh-secret-namespace=true.
+#   kubectl label namespace <name> osac.openshift.io/bmh-secret-namespace=true
 # Override bmf.secrets.netboxToken/netboxCA if custom Secret names are needed.
   netbox:
     enabled: false
