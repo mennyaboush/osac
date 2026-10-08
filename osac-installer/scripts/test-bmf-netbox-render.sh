@@ -40,8 +40,7 @@ NO_CA_RENDER="$TMP_DIR/netbox-no-ca-render.yaml"
 METAL3_RENDER="$TMP_DIR/metal3-render.yaml"
 BCM_RENDER="$TMP_DIR/bcm-render.yaml"
 OSAC_RENDER="$TMP_DIR/osac-netbox-render.yaml"
-ERROR_OUTPUT="$TMP_DIR/helm-error.log"
-HELM_ERROR_FILE=$ERROR_OUTPUT
+HELM_ERROR_FILE="$TMP_DIR/helm-error.log"
 source "$SCRIPT_DIR/helm-test-helpers.sh"
 
 helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" > "$NETBOX_RENDER"
