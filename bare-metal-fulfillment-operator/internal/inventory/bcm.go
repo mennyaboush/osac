@@ -44,7 +44,7 @@ const certBaseDir = "/etc/osac/certs"
 // Satisfied by *bcmclient.Client; defined here so tests can substitute a mock
 // without depending on the bcmclient package.
 //
-//go:generate mockgen -destination=bcm_mock_test.go -package=inventory . BCMAPI,BMHLifecycleManager,BMCDiscoverer
+//go:generate mockgen -source=$GOFILE -destination=bcm_mock_test.go -package=$GOPACKAGE BCMAPI,BMCDiscoverer
 type BCMAPI interface {
 	CertWatcher() *certwatcher.CertWatcher
 	GetDevices(ctx context.Context) ([]bcmclient.Device, error)
@@ -122,16 +122,16 @@ func ParseBCMOptions(options map[string]any) (*BCMClientConfig, error) {
 }
 
 // BCMClient implements inventory.Client by wrapping a BCMAPI
-// for BCM API communication and a BMHLifecycleManager for BMH lifecycle.
+// for BCM API communication and a baremetalhost.BMHLifecycleManager for BMH lifecycle.
 type BCMClient struct {
 	client        BCMAPI
-	bmhManager    BMHLifecycleManager
+	bmhManager    baremetalhost.BMHLifecycleManager
 	bmcDiscoverer BMCDiscoverer
 	hostClass     string
 }
 
 // NewBCMClient creates a BCM inventory client with injected dependencies.
-func NewBCMClient(client BCMAPI, bmhManager BMHLifecycleManager, hostClass string) *BCMClient {
+func NewBCMClient(client BCMAPI, bmhManager baremetalhost.BMHLifecycleManager, hostClass string) *BCMClient {
 	return &BCMClient{
 		client:     client,
 		bmhManager: bmhManager,
