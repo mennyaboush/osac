@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/netboxclient"
 )
 
@@ -76,7 +77,7 @@ func ParseNetBoxOptions(options map[string]any) (*NetBoxClientConfig, error) {
 // available for the follow-on allocation and release operations.
 type NetBoxClient struct {
 	api        NetBoxAPI
-	bmhManager BMHLifecycleManager
+	bmhManager baremetalhost.BMHLifecycleManager
 	hostClass  string
 }
 
@@ -121,7 +122,7 @@ func NewNetBoxClient(_ context.Context, config *Config) (Client, error) {
 // SetBMHLifecycleManager injects the existing Metal3 lifecycle manager during
 // operator startup. NetBox devices are inventory records; Metal3 remains
 // responsible for the corresponding BareMetalHost and runtime BMC Secret.
-func (c *NetBoxClient) SetBMHLifecycleManager(manager BMHLifecycleManager) error {
+func (c *NetBoxClient) SetBMHLifecycleManager(manager baremetalhost.BMHLifecycleManager) error {
 	if c == nil {
 		return fmt.Errorf("NetBox inventory client is required")
 	}

@@ -14,19 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package inventory
+package baremetalhost
 
-import (
-	"context"
+import "context"
 
-	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
-)
-
-// BMHLifecycleManager abstracts BareMetalHost CR operations for inventory
-// backends that prepare or release Metal3-managed hosts. Satisfied by
-// *baremetalhost.Manager.
+// BMHLifecycleManager exposes the BareMetalHost operations used by inventory
+// backends. Manager implements this interface.
+//
+//go:generate mockgen -destination=bmh_lifecycle_manager_mock.go -package=baremetalhost . BMHLifecycleManager
 type BMHLifecycleManager interface {
-	CreateBMH(ctx context.Context, params baremetalhost.CreateParams) error
+	CreateBMH(ctx context.Context, params CreateParams) error
 	DeleteBMH(ctx context.Context, name string) error
 	BMHExists(ctx context.Context, name string) (bool, error)
 	IsBMHReady(ctx context.Context, name string) (bool, error)
@@ -35,3 +32,5 @@ type BMHLifecycleManager interface {
 	GetHardwareNICs(ctx context.Context, name string) ([]string, error)
 	Namespace() string
 }
+
+var _ BMHLifecycleManager = (*Manager)(nil)
