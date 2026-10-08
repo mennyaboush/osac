@@ -42,9 +42,10 @@ type NetBoxAPI interface {
 
 // NetBoxClientConfig contains the mounted-file and endpoint settings for NetBox.
 type NetBoxClientConfig struct {
-	URL       string `json:"url"`
-	TokenFile string `json:"tokenFile"`
-	CAFile    string `json:"caFile"`
+	URL               string `json:"url"`
+	TokenFile         string `json:"tokenFile"`
+	CAFile            string `json:"caFile"`
+	AllowInsecureHTTP bool   `json:"allowInsecureHTTP"`
 }
 
 // ParseNetBoxOptions extracts the NetBox-specific settings from inventory
@@ -109,9 +110,10 @@ func NewNetBoxClient(_ context.Context, config *Config) (Client, error) {
 	}
 
 	api, err := netboxclient.New(netboxclient.Config{
-		Endpoint:  netBoxConfig.URL,
-		TokenFile: netBoxConfig.TokenFile,
-		CAFile:    netBoxConfig.CAFile,
+		Endpoint:          netBoxConfig.URL,
+		TokenFile:         netBoxConfig.TokenFile,
+		CAFile:            netBoxConfig.CAFile,
+		AllowInsecureHTTP: netBoxConfig.AllowInsecureHTTP,
 	})
 	if err != nil {
 		return nil, err
