@@ -47,8 +47,12 @@ secretAPI:
 
 netbox:
   enabled: false
+  # BMH namespace used for Metal3 management and BMC Secret RBAC in NetBox mode.
+  bmhNamespace: ""
   url: ""
-  token: ""
+  tokenSecretKey: "token"
+  tokenValue: ""
+  useExistingTokenSecret: false
   caCert: ""
   allowInsecureHTTP: false
 
@@ -64,7 +68,7 @@ bcm:
 
 metal3:
   enabled: false
-  # For NetBox, use a namespace dedicated to BareMetalHosts and BMC Secrets.
-  # The manager can get/create/update/delete all Secrets in that namespace.
+  # Namespace used when Metal3 is the inventory backend. NetBox configures its
+  # Metal3 management namespace under netbox.bmhNamespace.
   namespace: ""
   hostClass: "metal3"

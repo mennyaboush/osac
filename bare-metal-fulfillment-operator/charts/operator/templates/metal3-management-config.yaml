@@ -7,6 +7,10 @@
 {{- end }}
 {{- end }}
 {{- if or .Values.metal3.enabled .Values.netbox.enabled }}
+{{- $bmhNamespace := .Values.metal3.namespace }}
+{{- if .Values.netbox.enabled }}
+{{- $bmhNamespace = .Values.netbox.bmhNamespace }}
+{{- end }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -21,5 +25,5 @@ stringData:
     type: metal3
     options:
       metal3:
-        namespace: {{ .Values.metal3.namespace | quote }}
+        namespace: {{ $bmhNamespace | quote }}
 {{- end }}

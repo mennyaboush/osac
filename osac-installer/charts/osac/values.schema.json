@@ -2049,7 +2049,7 @@
             },
             "netboxToken": {
               "type": "string",
-              "description": "Secret name for the NetBox API token",
+              "description": "Name of the NetBox API token Secret. The chart creates it unless bmf.netbox.useExistingTokenSecret is true.",
               "default": "osac-netbox-token"
             },
             "netboxCA": {
@@ -2221,22 +2221,38 @@
         },
         "netbox": {
           "type": "object",
-          "description": "NetBox inventory configuration. Its Metal3 management namespace is configured under bmf.metal3.namespace.",
+          "description": "NetBox inventory configuration. bmhNamespace supplies the namespace for Metal3 BMH management and the namespaced BMC Secret Role.",
           "properties": {
             "enabled": {
               "type": "boolean",
               "description": "Select NetBox as the BMF inventory backend.",
               "default": false
             },
+            "bmhNamespace": {
+              "type": "string",
+              "description": "Namespace containing Metal3 BareMetalHosts and their BMC credential Secrets. Used by Metal3 management and the BMF namespaced Secret Role when NetBox is enabled.",
+              "default": ""
+            },
             "url": {
               "type": "string",
               "description": "NetBox API endpoint URL.",
               "default": ""
             },
-            "token": {
+            "tokenSecretKey": {
               "type": "string",
-              "description": "NetBox API token stored in a Kubernetes Secret and mounted as a file.",
+              "description": "Key within the NetBox token Secret containing the API token.",
+              "pattern": "^[A-Za-z0-9._-]+$",
+              "default": "token"
+            },
+            "tokenValue": {
+              "type": "string",
+              "description": "Inline NetBox API token stored under tokenSecretKey when the chart creates the Secret. Leave empty when useExistingTokenSecret is true.",
               "default": ""
+            },
+            "useExistingTokenSecret": {
+              "type": "boolean",
+              "description": "Use the pre-created Secret named by bmf.secrets.netboxToken in the BMF release namespace and read bmf.netbox.tokenSecretKey instead of creating a Secret from bmf.netbox.tokenValue.",
+              "default": false
             },
             "caCert": {
               "type": "string",
@@ -2253,16 +2269,16 @@
         },
         "metal3": {
           "type": "object",
-          "description": "Metal3 inventory configuration. When enabled, creates inventory and management Secrets; NetBox also uses the Metal3 namespace for BMH management.",
+          "description": "Metal3 inventory configuration. NetBox configures its Metal3 management namespace under bmf.netbox.bmhNamespace.",
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Create Metal3 inventory and management config Secrets",
+              "description": "Select Metal3 as the BMF inventory backend.",
               "default": false
             },
             "namespace": {
               "type": "string",
-              "description": "Kubernetes namespace where BareMetalHost CRs are located. For NetBox, use a dedicated namespace for BMHs and BMC Secrets and label it osac.openshift.io/bmh-secret-namespace=true; the installer validates this before granting BMF Secret access."
+              "description": "Kubernetes namespace where BareMetalHost CRs are located when Metal3 is the inventory backend."
             },
             "hostClass": {
               "type": "string",

@@ -18,14 +18,14 @@ secrets:
   netboxCA: custom-netbox-ca
 netbox:
   enabled: true
-  url: https://netbox.example.test/api/
-  token: render-test-netbox-token
+  bmhNamespace: host-inventory
+  url: https://netbox.example.test
+  tokenValue: render-test-netbox-token
   caCert: |
     TEST-CA-CERTIFICATE
   allowInsecureHTTP: false
 metal3:
   enabled: false
-  namespace: host-inventory
 secretAPI:
   url: https://fulfillment-internal-api:8001
   tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
@@ -57,12 +57,18 @@ inventory = next(
 config = inventory.split("inventory.yaml: |", 1)[1]
 assert "type: netbox" in config
 assert "hostClass: metal3" in config
-assert 'url: "https://netbox.example.test/api/"' in config
+assert 'url: "https://netbox.example.test"' in config
 assert 'tokenFile: "/etc/osac/secrets/netbox/token"' in config
 assert 'caFile: "/etc/osac/secrets/netbox-ca/ca.crt"' in config
 assert "allowInsecureHTTP: false" in config
 assert "render-test-netbox-token" not in config
 assert "TEST-CA-CERTIFICATE" not in config
+management = next(
+    doc for doc in documents
+    if "kind: Secret" in doc and "name: osac-management-config" in doc
+    and "management.yaml: |" in doc
+)
+assert 'namespace: "host-inventory"' in management
 token_secret = next(doc for doc in documents if "name: custom-netbox-token" in doc)
 assert 'token: "render-test-netbox-token"' in token_secret
 ca_secret = next(doc for doc in documents if "name: custom-netbox-ca" in doc)
@@ -160,22 +166,28 @@ assert_helm_failure "bcm.enabled and metal3.enabled are mutually exclusive" \
 
 assert_helm_failure "netbox.url is required" \
   helm template bmf "$BMF_CHART" --namespace osac \
-  --set netbox.enabled=true --set-string netbox.token=render-test \
-  --set-string metal3.namespace=host-inventory
-assert_helm_failure "netbox.token is required" \
+  --set netbox.enabled=true --set-string netbox.tokenValue=render-test \
+  --set-string netbox.bmhNamespace=host-inventory
+assert_helm_failure "netbox.tokenValue is required" \
   helm template bmf "$BMF_CHART" --namespace osac \
   --set netbox.enabled=true --set-string netbox.url=https://netbox.example.test \
-  --set-string netbox.token= --set-string metal3.namespace=host-inventory
-assert_helm_failure "metal3.namespace is required" \
+  --set-string netbox.tokenValue= --set-string netbox.bmhNamespace=host-inventory
+assert_helm_failure "netbox.bmhNamespace is required" \
   helm template bmf "$BMF_CHART" --namespace osac \
   --set netbox.enabled=true --set-string netbox.url=https://netbox.example.test \
-  --set-string netbox.token=render-test
+  --set-string netbox.tokenValue=render-test
 assert_helm_failure "netbox.enabled and metal3.enabled are mutually exclusive" \
   helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
   --set metal3.enabled=true
 assert_helm_failure "netbox.enabled and bcm.enabled are mutually exclusive" \
   helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
   --set bcm.enabled=true
+assert_helm_failure "netbox.url must start with http:// or https://" \
+  helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
+  --set-string netbox.url=netbox.example.test
+assert_helm_failure "netbox.url must start with http:// or https://" \
+  helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
+  --set-string netbox.url=ftp://netbox.example.test
 assert_helm_failure "netbox.url uses HTTP" \
   helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
   --set-string netbox.url=http://netbox.example.test
@@ -197,11 +209,11 @@ bmf:
     netboxToken: custom-netbox-token
   netbox:
     enabled: true
-    url: https://netbox.example.test/api/
-    token: render-test-netbox-token
+    bmhNamespace: host-inventory
+    url: https://netbox.example.test
+    tokenValue: render-test-netbox-token
   metal3:
     enabled: false
-    namespace: host-inventory
 YAML
 
 helm template osac "$OSAC_CHART" --values "$OSAC_CHART/ci/default-values.yaml" \

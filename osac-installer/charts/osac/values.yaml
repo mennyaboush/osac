@@ -454,14 +454,17 @@ bmf:
       key: "bundle.pem"
   netbox:
     enabled: false
+    bmhNamespace: ""
     url: ""
-    token: ""
+    tokenSecretKey: "token"
+    tokenValue: ""
+    useExistingTokenSecret: false
     caCert: ""
     allowInsecureHTTP: false
   metal3:
     enabled: false
-    # For NetBox, dedicate this namespace to BMHs and their BMC Secrets and label it
-    # osac.openshift.io/bmh-secret-namespace=true before installing.
+    # Namespace where Metal3 inventory reads BareMetalHost resources.
+    # NetBox configures its Metal3 management namespace under bmf.netbox.bmhNamespace.
     namespace: ""
     hostClass: "metal3"
 

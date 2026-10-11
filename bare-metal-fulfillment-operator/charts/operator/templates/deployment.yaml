@@ -165,7 +165,7 @@ spec:
           secret:
             secretName: {{ .Values.secrets.netboxToken }}
             items:
-              - key: token
+              - key: {{ .Values.netbox.tokenSecretKey }}
                 path: token
         {{- if .Values.netbox.caCert }}
         - name: netbox-ca

@@ -388,13 +388,13 @@ bmf:
 # When enabled, the chart creates osac-inventory-config and osac-management-config
 # Secrets with Metal3 backend type. The BMF operator mounts these at
 # /etc/osac/inventory/inventory.yaml and /etc/osac/management/management.yaml.
-# For NetBox inventory, set metal3.namespace but leave metal3.enabled false:
-# NetBox uses Metal3 for BMH management without selecting Metal3 inventory.
+# For NetBox inventory, set bmf.netbox.bmhNamespace. metal3.enabled selects
+# Metal3 inventory; NetBox uses Metal3 independently for BMH management.
   metal3:
     # Set to true to create Metal3 config secrets via Helm.
     # When false (default), the Metal3 inventory config is not created.
     enabled: false
-    # [REQUIRED when metal3.enabled or netbox.enabled] Namespace where BareMetalHost CRs are located.
+    # [REQUIRED when metal3.enabled] Namespace where BareMetalHost CRs are located.
     # Example: "hardware-inventory"
     namespace: ""
     # Host class identifier written to the inventory config.
@@ -403,19 +403,30 @@ bmf:
 # ---------------------
 # Bare Metal Fulfillment Operator — NetBox Backend
 # ---------------------
-# NetBox inventory with Metal3 BMH management. metal3.enabled must remain
-# false in this mode; set metal3.namespace to the BMH namespace above.
-# Use a dedicated namespace for BMHs and BMC Secrets: BMF can get/create/update/
-# delete all Secrets there to materialize per-host credentials. Before installing,
-# label that namespace osac.openshift.io/bmh-secret-namespace=true.
+# NetBox inventory with Metal3 BMH management. metal3.enabled stays false in
+# this mode; set bmf.netbox.bmhNamespace to the namespace containing the Metal3 BMHs.
+# BMF creates a namespaced Role there that can get/create/update/delete Secrets
+# for per-host BMC credentials. Use a dedicated namespace and label it
+# osac.openshift.io/bmh-secret-namespace=true before installing.
 #   kubectl label namespace <name> osac.openshift.io/bmh-secret-namespace=true
 # Override bmf.secrets.netboxToken/netboxCA if custom Secret names are needed.
+# When bmf.netbox.useExistingTokenSecret is true, create the token Secret in
+# the BMF release namespace before installation; it must contain the key named by
+# bmf.netbox.tokenSecretKey (default: "token").
   netbox:
     enabled: false
+    # [REQUIRED when enabled] Namespace containing Metal3 BareMetalHosts and BMC Secrets.
+    bmhNamespace: ""
     # [REQUIRED when enabled] NetBox API endpoint.
     url: ""
-    # [REQUIRED when enabled] Stored in a dedicated Secret and mounted read-only.
-    token: ""
+    # Key inside the NetBox token Secret that contains the API token.
+    tokenSecretKey: "token"
+    # [REQUIRED unless useExistingTokenSecret is true] Token value stored in a
+    # dedicated Secret and mounted read-only. Leave empty when using an existing Secret.
+    tokenValue: ""
+    # Use the pre-created Secret named by bmf.secrets.netboxToken instead of
+    # creating it from tokenValue. Leave tokenValue empty when this is true.
+    useExistingTokenSecret: false
     # [OPTIONAL] PEM CA certificate stored in a dedicated Secret and mounted read-only.
     caCert: ""
     # HTTP endpoints are disabled unless this explicit opt-in is true.
