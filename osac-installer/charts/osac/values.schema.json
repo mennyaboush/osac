@@ -2194,10 +2194,11 @@
               "description": "Fulfillment Secret API endpoint.",
               "default": "https://fulfillment-internal-api:8001"
             },
-            "tokenFile": {
+            "issuerUrl": {
               "type": "string",
-              "description": "Path to the projected Kubernetes ServiceAccount token used by the controller.",
-              "default": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+              "description": "OIDC issuer for the BMF Keycloak service client; must match service.auth.issuerUrl.",
+              "default": "https://keycloak-keycloak.{{ .Values.global.clusterDomain }}/realms/osac",
+              "pattern": "^https://([^/\\s]+|[^/]*\\{\\{[^}]+\\}\\})"
             },
             "caBundle": {
               "type": "object",

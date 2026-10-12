@@ -9,12 +9,13 @@ RESOLVED_REALM="${REALM_OUTPUT_PATH:-/realm/realm.json}"
 echo "Resolving Keycloak realm secrets..."
 
 if ! oc get secret "${SECRET_NAME}" -n "${NAMESPACE}"; then
-    echo "Generating osac-controller/osac-admin/osac-csi-driver/osac-ui-backend client secrets..."
+    echo "Generating osac-controller/osac-admin/osac-csi-driver/osac-ui-backend/osac-bmf client secrets..."
     oc create secret generic "${SECRET_NAME}" -n "${NAMESPACE}" \
         --from-literal=osac-controller="$(openssl rand -base64 18)" \
         --from-literal=osac-admin="$(openssl rand -base64 18)" \
         --from-literal=osac-csi-driver="$(openssl rand -base64 18)" \
-        --from-literal=osac-ui-backend="$(openssl rand -base64 18)"
+        --from-literal=osac-ui-backend="$(openssl rand -base64 18)" \
+        --from-literal=osac-bmf="$(openssl rand -base64 18)"
 else
     # Upgrade path: add osac-csi-driver key if the Secret exists but predates
     # this client (i.e. was created before OSAC-4261).
@@ -33,9 +34,18 @@ else
     fi
 fi
 
+# Upgrade path: add the BMF client key if this Secret predates the client.
+if ! oc get secret "$SECRET_NAME" -n "$NAMESPACE" -o jsonpath='{.data.osac-bmf}' | grep -q .; then
+    echo "Patching $SECRET_NAME to add osac-bmf key..."
+    BMF_NEW=$(openssl rand -base64 18)
+    oc patch secret "$SECRET_NAME" -n "$NAMESPACE" \
+        -p "{\"data\":{\"osac-bmf\":\"$(printf '%s' "$BMF_NEW" | base64 -w0)\"}}"
+fi
+
 CONTROLLER_SECRET=$(oc get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data.osac-controller}' | base64 -d)
 ADMIN_SECRET=$(oc get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data.osac-admin}' | base64 -d)
 CSI_DRIVER_SECRET=$(oc get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data.osac-csi-driver}' | base64 -d)
+BMF_SECRET=$(oc get secret "$SECRET_NAME" -n "$NAMESPACE" -o jsonpath='{.data.osac-bmf}' | base64 -d)
 UI_BACKEND_SECRET=$(oc get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath='{.data.osac-ui-backend}' | base64 -d)
 
 [[ -n "${CONTROLLER_SECRET}" ]] || { echo "ERROR: ${SECRET_NAME} missing osac-controller key" >&2; exit 1; }
@@ -45,6 +55,8 @@ UI_BACKEND_SECRET=$(oc get secret "${SECRET_NAME}" -n "${NAMESPACE}" -o jsonpath
 
 REALM_ADMIN_USERNAME="${REALM_ADMIN_USERNAME:-admin}"
 REALM_ADMIN_PASSWORD="${REALM_ADMIN_PASSWORD:?REALM_ADMIN_PASSWORD must be set}"
+
+[[ -n "$BMF_SECRET" ]] || { echo "ERROR: $SECRET_NAME missing osac-bmf key" >&2; exit 1; }
 
 # REALM_ADMIN_USERNAME/PASSWORD are user-supplied Helm values (unlike the
 # auto-generated base64 client secrets above) substituted into JSON string
@@ -67,6 +79,7 @@ sed \
     -e "s#__OSAC_ADMIN_CLIENT_SECRET__#${ADMIN_SECRET}#" \
     -e "s#__OSAC_CSI_DRIVER_CLIENT_SECRET__#${CSI_DRIVER_SECRET}#" \
     -e "s#__OSAC_UI_BACKEND_CLIENT_SECRET__#${UI_BACKEND_SECRET}#" \
+    -e "s#__OSAC_BMF_CLIENT_SECRET__#${BMF_SECRET}#" \
     -e "s#__OSAC_REALM_ADMIN_USERNAME__#$(escape_sed_replacement "$(json_escape_string "${REALM_ADMIN_USERNAME}")")#" \
     -e "s#__OSAC_REALM_ADMIN_PASSWORD__#$(escape_sed_replacement "$(json_escape_string "${REALM_ADMIN_PASSWORD}")")#" \
     "${RAW_REALM}" > "${RESOLVED_REALM}"

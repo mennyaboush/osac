@@ -550,6 +550,14 @@ according to the different needs.
 
 ### Authorization Rules Overview
 
+The BMF deployment is provisioned with a confidential Keycloak client, osac-bmf, for the private
+Secrets API integration. Its Keycloak service account receives the osac-bmf-secret-reader realm role,
+which permits only private Secrets Get/List calls and gives the caller system-tenant scope.
+Authorization checks the role in the validated JWT, not the service-account username. The BMF
+Kubernetes ServiceAccount remains separate and is used for Kubernetes API access, including BMC
+credential Secret access. The BMF runtime token-exchange consumer is a follow-up; this chart change
+provisions its client credentials and issuer configuration.
+
 The authorization policy distinguishes between the following subject categories:
 
 1. **Admin Subjects**: Users with full access to all API methods. An account is considered admin if

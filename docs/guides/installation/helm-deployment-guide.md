@@ -216,7 +216,19 @@ mce:          { enabled: false }
 - `caIssuer.enabled: false` requires you to provide a `ClusterIssuer` and set
   `service.certs.issuerRef` in the phase-2 `my-values.yaml`.
 - `keycloak.enabled: false` requires a pre-configured Keycloak with the `osac`
-  realm, clients, and roles already set up.
+  realm, clients, and roles already set up. When NetBox-backed BMF is enabled,
+  this includes the confidential `osac-bmf` client with the
+  `osac-bmf-secret-reader` realm role assigned to its service account and
+  included in that client’s role scope mappings (keep Full Scope Allowed off).
+  Create `osac-bmf-secret-api-credentials` in the OSAC namespace with
+  `client-id` and `client-secret` keys, and set
+  `bmf.secretAPI.issuerUrl` to the same issuer as `service.auth.issuerUrl`.
+- `keycloak.realmOverwrite: false` preserves the existing realm instead of
+  importing the chart's realm configuration. For NetBox-backed BMF, manually
+  configure the same client, role assignment, and role scope mapping described
+  above, and set the Keycloak `osac-bmf` client secret to match the `osac-bmf`
+  key in the `keycloak-client-secrets` Secret in the `keycloak` namespace. The
+  chart copies that key into the BMF namespace.
 
 On a shared cluster, do not change cluster-scoped prerequisites without the
 agreement of the cluster owner.

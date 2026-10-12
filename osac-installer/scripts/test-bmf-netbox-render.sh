@@ -28,7 +28,7 @@ metal3:
   enabled: false
 secretAPI:
   url: https://fulfillment-internal-api:8001
-  tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+  issuerUrl: https://keycloak.example.test/realms/osac
   caBundle:
     configMap: ca-bundle
     key: bundle.pem
@@ -82,7 +82,13 @@ for verb in ("list", "watch"):
     assert f"  - {verb}" not in role
 deployment = next(doc for doc in documents if "kind: Deployment" in doc)
 assert "name: OSAC_SECRET_API_URL" in deployment
-assert "name: OSAC_SECRET_API_TOKEN_FILE" in deployment
+assert "name: OSAC_SECRET_API_ISSUER_URL" in deployment
+assert 'value: "https://keycloak.example.test/realms/osac"' in deployment
+assert "name: OSAC_SECRET_API_CLIENT_ID_FILE" in deployment
+assert "name: OSAC_SECRET_API_CLIENT_SECRET_FILE" in deployment
+assert "OSAC_SECRET_API_TOKEN_FILE" not in deployment
+assert "secretName: osac-bmf-secret-api-credentials" in deployment
+assert "mountPath: /etc/osac/secret-api/credentials/" in deployment
 assert "name: OSAC_SECRET_API_CA_FILE" in deployment
 assert "mountPath: /etc/osac/secrets/netbox/" in deployment
 assert "mountPath: /etc/osac/secrets/netbox-ca/" in deployment
@@ -194,6 +200,9 @@ assert_helm_failure "netbox.url uses HTTP" \
 assert_helm_failure "secretAPI.url must use HTTPS when NetBox is enabled" \
   helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
   --set-string secretAPI.url=http://fulfillment-internal-api:8001
+assert_helm_failure "secretAPI.issuerUrl is required when netbox.enabled is true" \
+  helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
+  --set-string secretAPI.issuerUrl=
 helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
   --set-string netbox.url=http://netbox.example.test \
   --set netbox.allowInsecureHTTP=true > "$TMP_DIR/netbox-http-render.yaml"
@@ -204,9 +213,14 @@ global:
   services:
     bmaas:
       enabled: true
+service:
+  auth:
+    issuerUrl: https://keycloak.example.test/realms/osac
 bmf:
   secrets:
     netboxToken: custom-netbox-token
+  secretAPI:
+    issuerUrl: https://keycloak.example.test/realms/osac
   netbox:
     enabled: true
     bmhNamespace: host-inventory
@@ -230,6 +244,14 @@ inventories = [
 ]
 assert len(inventories) == 1
 assert "type: netbox" in inventories[0]
+deployment = next(
+    doc for doc in documents
+    if "kind: Deployment" in doc and "name: bmf-operator-controller-manager" in doc
+)
+assert "OSAC_SECRET_API_ISSUER_URL" in deployment
+assert 'value: "https://keycloak.example.test/realms/osac"' in deployment
+assert "osac-bmf-secret-api-credentials" in deployment
+assert "OSAC_SECRET_API_TOKEN_FILE" not in deployment
 management = next(
     doc for doc in documents
     if "kind: Secret" in doc and "name: osac-management-config" in doc
@@ -333,5 +355,9 @@ assert_helm_failure "validation.enabled must be true when bmf.netbox.enabled is 
   helm template osac "$OSAC_CHART" --values "$OSAC_CHART/ci/default-values.yaml" \
   --values "$TMP_DIR/osac-netbox-values.yaml" \
   --set validation.enabled=false
+assert_helm_failure "bmf.secretAPI.issuerUrl must match service.auth.issuerUrl when bmf.netbox.enabled is true" \
+  helm template osac "$OSAC_CHART" --values "$OSAC_CHART/ci/default-values.yaml" \
+  --values "$TMP_DIR/osac-netbox-values.yaml" \
+  --set-string bmf.secretAPI.issuerUrl=https://wrong-issuer.example.test/realms/osac
 
 echo "BMF NetBox Helm render checks passed."

@@ -438,8 +438,9 @@ bmf:
   secretAPI:
     # Secret API endpoint used to resolve opaque BMC credential references.
     url: "https://fulfillment-internal-api:8001"
-    # The BMF ServiceAccount token is already projected read-only by Kubernetes.
-    tokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    # Must match service.auth.issuerUrl. The installer provisions the osac-bmf
+    # Keycloak client and mounts its credentials for the future Secret API consumer.
+    issuerUrl: "https://keycloak.keycloak.svc.cluster.local/realms/osac"
     caBundle:
       # Cluster trust-manager ConfigMap. Set empty to omit this CA mount.
       configMap: "ca-bundle"
