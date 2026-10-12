@@ -168,7 +168,7 @@ and `osac-infra`. Keys a chart doesn't recognize are ignored.
 | `keycloak.devFixtures.enabled` | Seeds fixed, known passwords for the built-in test users. Must be `false` outside of evaluation. | `false` |
 | `keycloak.route.hostname` | External route host name for Keycloak. The installation sets it. | `""` |
 | `keycloak.route.publicIngress` | Changes the Keycloak route from `passthrough` to `reencrypt` for clusters with publicly trusted ingress certificates. See [Infrastructure Configuration](#infrastructure-configuration). | `false` |
-| `keycloak.realmOverwrite` | Re-imports the realm definition on upgrade. | `true` |
+| `keycloak.realmOverwrite` | With `true`, updates an existing realm from the chart on upgrade. | `true` |
 | `keycloak.images.keycloak` | Keycloak image. | `keycloak:26.6.4` |
 | `keycloak.images.postgres` | Keycloak database image. | `postgresql-18-c10s` |
 | `osacNamespace` | Namespace that the `osac` platform release uses. `osac-infra` stamps cross-namespace resources with it. Set it to your namespace. | `osac` |
@@ -215,20 +215,31 @@ mce:          { enabled: false }
   use an address range that is valid for your network.
 - `caIssuer.enabled: false` requires you to provide a `ClusterIssuer` and set
   `service.certs.issuerRef` in the phase-2 `my-values.yaml`.
-- `keycloak.enabled: false` requires a pre-configured Keycloak with the `osac`
-  realm, clients, and roles already set up. When NetBox-backed BMF is enabled,
-  this includes the confidential `osac-bmf` client with the
-  `osac-bmf-secret-reader` realm role assigned to its service account and
-  included in that client’s role scope mappings (keep Full Scope Allowed off).
-  Create `osac-bmf-secret-api-credentials` in the OSAC namespace with
-  `client-id` and `client-secret` keys, and set
-  `bmf.secretAPI.issuerUrl` to the same issuer as `service.auth.issuerUrl`.
-- `keycloak.realmOverwrite: false` preserves the existing realm instead of
-  importing the chart's realm configuration. For NetBox-backed BMF, manually
-  configure the same client, role assignment, and role scope mapping described
-  above, and set the Keycloak `osac-bmf` client secret to match the `osac-bmf`
-  key in the `keycloak-client-secrets` Secret in the `keycloak` namespace. The
-  chart copies that key into the BMF namespace.
+- `keycloak.enabled: false` requires an existing Keycloak with the `osac`
+  realm, clients, and roles configured.
+
+#### NetBox-backed BMF with an external or unchanged Keycloak realm
+
+The bundled `osac` realm includes the `osac-bmf` client and role. A fresh
+install imports them; upgrades update the realm when
+`keycloak.realmOverwrite: true`. For NetBox-backed BMF, configure the client
+manually only with external Keycloak (`keycloak.enabled: false`) or when
+preserving an existing bundled realm (`keycloak.realmOverwrite: false`).
+
+Configure `osac-bmf` as a confidential client with service accounts enabled.
+Assign the `osac-bmf-secret-reader` realm role to its service account and include
+the role in the client's scope mappings. Disable **Full Scope Allowed**. In
+phase-2 values, set `bmf.secretAPI.issuerUrl` to match
+`service.auth.issuerUrl`. For authorization behavior, see the
+[BMF authorization details](../../../fulfillment-service/docs/AUTH.md#netbox-backed-bmf-secret-api).
+
+Provide `osac-bmf-secret-api-credentials` in `osacNamespace`:
+
+- **External Keycloak**: create the Secret with `client-id: osac-bmf` and
+  `client-secret` set to the client's secret.
+- **Bundled realm with overwrite disabled**: keep the client secret equal to
+  the `osac-bmf` key in `keycloak-client-secrets` in the `keycloak` namespace;
+  the installer copies it into `osac-bmf-secret-api-credentials`.
 
 On a shared cluster, do not change cluster-scoped prerequisites without the
 agreement of the cluster owner.
