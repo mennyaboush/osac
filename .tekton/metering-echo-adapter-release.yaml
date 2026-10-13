@@ -26,6 +26,8 @@ spec:
     value: adapters/Containerfile.echo-adapter
   - name: path-context
     value: osac-metering
+  - name: build-source-image
+    value: "true"
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while maintaining trust after pipeline customization.
@@ -160,6 +162,14 @@ spec:
         value: $(params.output-image).git
       - name: ociArtifactExpiresAfter
         value: $(params.image-expires-after)
+      # Limits the checkout fed to prefetch-dependencies and build-container
+      # to osac-metering/ only (this adapter has no dependency on proto/ or
+      # any other component), so the shared repo-root go.work genuinely
+      # doesn't exist in either one's view of the source tree -- avoids the
+      # workspace-vs-standalone dependency resolution mismatch that affects
+      # every other component sharing go.work.
+      - name: sparseCheckoutDirectories
+        value: osac-metering
       runAfter:
       - init
       taskRef:

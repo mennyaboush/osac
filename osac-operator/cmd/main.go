@@ -48,6 +48,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/ptr"
 	kubevirtv1 "kubevirt.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -397,6 +398,35 @@ func newDiscoveryIgnitionFetcher(reader client.Reader) (baremetalworker.Ignition
 
 // setupClusterControllers registers the ClusterOrder controller and, when grpcConn is set,
 // the cluster Feedback controller.
+
+// setupAddOnOperatorController registers the ClusterOrder add-on operator controller.
+func setupAddOnOperatorController(mgr mcmanager.Manager, maxJobHistory int) error {
+	localMgr := mgr.GetLocalManager()
+	aapURL := os.Getenv(envAAPURL)
+	aapToken := os.Getenv(envAAPToken)
+	aapInsecureSkipVerify := helpers.GetEnvWithDefault(envAAPInsecureSkipVerify, false)
+	templatePrefix := helpers.GetEnvWithDefault(envAAPTemplatePrefix, "osac")
+	provider, pollInterval, err := createAAPProvider(
+		aapURL, aapToken,
+		fmt.Sprintf("%s-install-addon-operator", templatePrefix), "", "", aapInsecureSkipVerify,
+	)
+	if err != nil {
+		return fmt.Errorf("create add-on operator provider: %w", err)
+	}
+
+	reconciler := controller.NewAddOnOperatorReconciler(
+		localMgr.GetClient(), localMgr.GetAPIReader(),
+		os.Getenv(envClusterOrderNamespace), provider, pollInterval,
+	)
+	reconciler.MaxJobHistory = maxJobHistory
+	if err := reconciler.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("add-on operator controller: %w", err)
+	}
+	return nil
+}
+
+// setupClusterControllers registers the ClusterOrder and add-on operator controllers and,
+// when grpcConn is set, the cluster Feedback controller.
 func setupClusterControllers(
 	mgr mcmanager.Manager, grpcConn grpc.ClientConnInterface,
 	maxJobHistory int,
@@ -423,7 +453,7 @@ func setupClusterControllers(
 		return err
 	}
 
-	return setupProvisioningController(
+	if err := setupProvisioningController(
 		envClusterAAPProvisionTemplate, envClusterAAPDeprovisionTemplate,
 		func() error {
 			if grpcConn == nil {
@@ -443,9 +473,15 @@ func setupClusterControllers(
 			)
 			reconciler.StallThresholds = clusterOrderStallThresholdsFromEnv()
 			reconciler.Recorder = localMgr.GetEventRecorder(controller.ClusterOrderControllerName)
-			return reconciler.SetupWithManager(mgr)
+			if err := reconciler.SetupWithManager(mgr); err != nil {
+				return err
+			}
+			return nil
 		},
-	)
+	); err != nil {
+		return err
+	}
+	return setupAddOnOperatorController(mgr, maxJobHistory)
 }
 
 func clusterOrderStallThresholdsFromEnv() controller.ClusterOrderStallThresholds {
@@ -1344,6 +1380,9 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "95f7e044.openshift.io",
+		LeaseDuration:          ptr.To(35 * time.Second),
+		RenewDeadline:          ptr.To(25 * time.Second),
+		RetryPeriod:            ptr.To(5 * time.Second),
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly

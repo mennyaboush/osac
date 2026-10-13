@@ -29,8 +29,8 @@
           "properties": {
             "enabled": {
               "type": "boolean",
-              "description": "Enable fulfillment trust synchronization for tenant-scoped ClusterOrders",
-              "default": true
+              "description": "Enable fulfillment trust synchronization for tenant-scoped ClusterOrders when tenant CSI trust support is deployed",
+              "default": false
             },
             "tenantNamespace": {
               "type": "string",
@@ -669,6 +669,74 @@
           "minLength": 1,
           "description": "Hostname for the internal API Route"
         },
+        "mcp": {
+          "type": "object",
+          "description": "Optional fulfillment MCP endpoint",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Deploy the fulfillment MCP server",
+              "default": false
+            },
+            "externalHostname": {
+              "type": "string",
+              "description": "DNS hostname advertised by the MCP server; Kind requires mcp.<namespace>.localhost"
+            },
+            "externalPort": {
+              "type": "integer",
+              "description": "Externally reachable TLS port for the MCP server; OpenShift Routes require 443",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 443
+            },
+            "exchangeClientId": {
+              "type": "string",
+              "description": "Confidential OAuth token exchange client ID; use the MCP resource URL ending in / for Keycloak audience validation"
+            },
+            "exchangeCredentialsSecret": {
+              "type": "string",
+              "description": "Secret containing client-secret for the MCP token exchange client"
+            },
+            "resources": {
+              "type": "object",
+              "description": "CPU and memory resources for the MCP server container",
+              "required": ["requests", "limits"],
+              "properties": {
+                "requests": {
+                  "type": "object",
+                  "required": ["cpu", "memory"],
+                  "properties": {
+                    "cpu": {"type": "string", "minLength": 1, "default": "50m"},
+                    "memory": {"type": "string", "minLength": 1, "default": "128Mi"}
+                  },
+                  "additionalProperties": false
+                },
+                "limits": {
+                  "type": "object",
+                  "required": ["cpu", "memory"],
+                  "properties": {
+                    "cpu": {"type": "string", "minLength": 1, "default": "500m"},
+                    "memory": {"type": "string", "minLength": 1, "default": "512Mi"}
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "allOf": [{
+            "if": {"properties": {"enabled": {"const": true}}},
+            "then": {
+              "required": ["externalHostname", "exchangeClientId", "exchangeCredentialsSecret"],
+              "properties": {
+                "externalHostname": {"minLength": 1},
+                "exchangeClientId": {"minLength": 1},
+                "exchangeCredentialsSecret": {"minLength": 1}
+              }
+            }
+          }],
+          "additionalProperties": false
+        },
         "variant": {
           "type": "string",
           "description": "Deployment variant",
@@ -880,6 +948,12 @@
               "type": "string",
               "description": "Vault role name for JWT authentication during lifecycle operations"
             },
+            "transitMountPath": {
+              "type": "string",
+              "description": "Transit engine mount path within ordinary tenant and system namespaces; must differ from kvMountPath",
+              "default": "transit",
+              "pattern": "^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$"
+            },
             "lifecycleMountPath": {
               "type": "string",
               "description": "Auth method mount path in the Vault parent namespace for lifecycle JWT authentication",
@@ -956,6 +1030,27 @@
           "description": "Helm-injected global values (passed automatically to subcharts)"
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "variant": {"const": "openshift"},
+              "mcp": {
+                "properties": {"enabled": {"const": true}},
+                "required": ["enabled"]
+              }
+            },
+            "required": ["variant", "mcp"]
+          },
+          "then": {
+            "properties": {
+              "mcp": {
+                "properties": {"externalPort": {"const": 443}}
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "aap": {
@@ -2447,11 +2542,6 @@
                     "description": "IPv4 CIDR for this rule (e.g. 0.0.0.0/0)",
                     "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/(3[0-2]|[12]?[0-9])$"
                   },
-                  "ipv6Cidr": {
-                    "type": "string",
-                    "description": "Optional IPv6 CIDR for this rule. The create-network-class hook forwards it when set. Netris fabric is IPv4-only; CUDN/k8s_only may use IPv6.",
-                    "pattern": "^$|^[0-9a-fA-F:]+/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$"
-                  },
                   "portFrom": {
                     "type": "integer",
                     "description": "Starting port (tcp/udp only)",
@@ -2873,11 +2963,6 @@
                     "type": "string",
                     "description": "IPv4 CIDR for this rule.",
                     "pattern": "^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/(3[0-2]|[12]?[0-9])$"
-                  },
-                  "ipv6Cidr": {
-                    "type": "string",
-                    "description": "Optional IPv6 CIDR for this rule. Netris fabric is IPv4-only; CUDN/k8s_only may use IPv6.",
-                    "pattern": "^$|^[0-9a-fA-F:]+/(12[0-8]|1[01][0-9]|[1-9]?[0-9])$"
                   },
                   "portFrom": {
                     "type": "integer",

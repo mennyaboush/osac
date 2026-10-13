@@ -21,8 +21,8 @@ global:
     endpoint: ""
   fulfillmentTrust:
     # Enables trust reconciliation for tenant-scoped ClusterOrders.
-    # Development and CI profiles can override this until tenant trust support is installed.
-    enabled: true
+    # Enable only when tenant CSI trust support is deployed.
+    enabled: false
     tenantNamespace: osac-csi
   # --- Service Enablement ---
   # Controls which service tiers are active across all OSAC components.
@@ -155,6 +155,21 @@ service:
   externalHostname: ""
   # [REQUIRED] Hostname for the internal API Route (e.g. fulfillment-internal-api-osac.apps.mycluster.example.com)
   internalHostname: ""
+  mcp:
+    enabled: false
+    externalHostname: ""
+    # OpenShift Routes use HTTPS port 443; custom external ports are supported on Kind.
+    externalPort: 443
+    # The OAuth resource URL is the MCP HTTPS root URL ending in /.
+    exchangeClientId: ""
+    exchangeCredentialsSecret: ""
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
   images:
     service:
       repository: ghcr.io/osac-project/fulfillment-service
@@ -206,6 +221,8 @@ service:
     endpoint: "https://openbao.osac-infra.svc.cluster.local:8200"
     namespace: osac
     kvMountPath: secret
+    # Transit engine mount path within ordinary tenant namespaces.
+    transitMountPath: transit
     lifecycleRole: ""
     lifecycleMountPath: "jwt"
     keycloakClientId: ""
@@ -519,7 +536,6 @@ networkClass:
     egressRules:
     - protocol: PROTOCOL_ALL
       ipv4Cidr: "0.0.0.0/0"
-      # ipv6Cidr is optional and forwarded by the create-network-class hook.
   # Example expert override (k8s-only):
   # enabled: true
   # title: "K8s-only networking"
