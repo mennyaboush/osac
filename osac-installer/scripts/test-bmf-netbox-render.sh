@@ -80,6 +80,21 @@ role = next(
 assert "namespace: host-inventory" in role
 for verb in ("list", "watch"):
     assert f"  - {verb}" not in role
+namespace_job = next(
+    doc for doc in documents
+    if "kind: Job" in doc and "name: bmf-operator-netbox-ns-validation" in doc
+)
+assert '"helm.sh/hook": pre-install,pre-upgrade' in namespace_job
+assert 'name: BMH_NAMESPACE' in namespace_job
+assert 'value: "host-inventory"' in namespace_job
+assert "osac\\.openshift\\.io/bmh-secret-namespace" in namespace_job
+namespace_role = next(
+    doc for doc in documents
+    if "kind: ClusterRole" in doc
+    and "name: bmf-operator-netbox-ns-validation-osac" in doc
+)
+assert 'resourceNames: ["host-inventory"]' in namespace_role
+assert 'verbs: ["get"]' in namespace_role
 deployment = next(doc for doc in documents if "kind: Deployment" in doc)
 assert "name: OSAC_SECRET_API_URL" in deployment
 assert "name: OSAC_SECRET_API_ISSUER_URL" in deployment
@@ -94,6 +109,39 @@ assert "mountPath: /etc/osac/secrets/netbox/" in deployment
 assert "mountPath: /etc/osac/secrets/netbox-ca/" in deployment
 assert "mountPath: /etc/osac/secret-api/ca/" in deployment
 assert deployment.count("readOnly: true") >= 3
+PY
+
+helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
+  --set-string netbox.tokenSecretKey=true > "$TMP_DIR/netbox-string-token-key-render.yaml"
+python3 - "$TMP_DIR/netbox-string-token-key-render.yaml" <<'PY'
+import sys
+
+render = open(sys.argv[1], encoding="utf-8").read()
+documents = render.split("\n---\n")
+token_secret = next(doc for doc in documents if "name: custom-netbox-token" in doc)
+assert '"true": "render-test-netbox-token"' in token_secret
+deployment = next(doc for doc in documents if "kind: Deployment" in doc)
+assert '- key: "true"' in deployment
+PY
+
+python3 - "$NETBOX_RENDER" "$TMP_DIR/bmf-netbox-namespace-validation.sh" <<'PY'
+import sys
+
+render = open(sys.argv[1], encoding="utf-8").read()
+job = next(
+    doc for doc in render.split("\n---\n")
+    if "kind: Job" in doc and "name: bmf-operator-netbox-ns-validation" in doc
+)
+lines = job.splitlines()
+script_start = next(i for i, line in enumerate(lines) if line.strip() == "- |")
+script_lines = []
+for line in lines[script_start + 1:]:
+    if line and not line.startswith("          "):
+        break
+    script_lines.append(line[10:] if line else "")
+
+with open(sys.argv[2], "w", encoding="utf-8") as script:
+    script.write("\n".join(script_lines) + "\n")
 PY
 
 helm template bmf "$BMF_CHART" --namespace osac --values "$NETBOX_VALUES" \
@@ -261,9 +309,9 @@ assert "type: metal3" in management
 assert 'namespace: "host-inventory"' in management
 assert "Checking for Metal3 BareMetalHost CRD..." in render
 assert "kubectl get provisioning provisioning-configuration" in render
-assert "BMF_BMH_NAMESPACE" in render
+assert "BMH_NAMESPACE" in render
 assert "osac\\.openshift\\.io/bmh-secret-namespace" in render
-assert "Label namespace $BMF_BMH_NAMESPACE with osac.openshift.io/bmh-secret-namespace=true." in render
+assert "Label namespace $BMH_NAMESPACE with osac.openshift.io/bmh-secret-namespace=true." in render
 
 provisioning_role = next(
     doc for doc in documents
@@ -274,7 +322,8 @@ assert 'verbs: ["get"]' in provisioning_role
 
 namespace_role = next(
     doc for doc in documents
-    if "kind: ClusterRole" in doc and 'resources: ["namespaces"]' in doc
+    if "kind: ClusterRole" in doc
+    and "name: bmf-operator-netbox-ns-validation-default" in doc
 )
 assert 'resourceNames: ["host-inventory"]' in namespace_role
 assert 'verbs: ["get"]' in namespace_role
@@ -316,7 +365,7 @@ if [[ "$1" == get && "$2" == provisioning && "$3" == provisioning-configuration 
   printf '%s' "$MOCK_WATCH_ALL_NAMESPACES"
   exit 0
 fi
-if [[ "$1" == get && "$2" == namespace && "$3" == host-inventory ]]; then
+if [[ "$1" == get && "$2" == namespace && "$3" == "${BMH_NAMESPACE:-}" ]]; then
   if [[ "$MOCK_NAMESPACE_LABEL" == true ]]; then
     echo true
   fi
@@ -328,33 +377,43 @@ exit 1
 SH
 chmod +x "$TMP_DIR/mock-bin/kubectl"
 
-if MOCK_NAMESPACE_LABEL=true MOCK_WATCH_ALL_NAMESPACES=true BMF_BMH_NAMESPACE=host-inventory \
+if MOCK_NAMESPACE_LABEL=true BMH_NAMESPACE=host-inventory \
+  PATH="$TMP_DIR/mock-bin:$PATH" /bin/sh "$TMP_DIR/bmf-netbox-namespace-validation.sh" \
+  > "$TMP_DIR/bmf-namespace-success.log" 2>&1; then
+  :
+else
+  cat "$TMP_DIR/bmf-namespace-success.log" >&2
+  echo "BMF validation rejected a labeled NetBox BMH namespace." >&2
+  exit 1
+fi
+
+if MOCK_NAMESPACE_LABEL=missing BMH_NAMESPACE=host-inventory \
+  PATH="$TMP_DIR/mock-bin:$PATH" /bin/sh "$TMP_DIR/bmf-netbox-namespace-validation.sh" \
+  > "$TMP_DIR/bmf-namespace-missing-label.log" 2>&1; then
+  echo "BMF validation accepted an unlabeled NetBox BMH namespace." >&2
+  exit 1
+fi
+rg -Fq "Label namespace host-inventory with osac.openshift.io/bmh-secret-namespace=true." \
+  "$TMP_DIR/bmf-namespace-missing-label.log"
+
+if MOCK_WATCH_ALL_NAMESPACES=true \
   PATH="$TMP_DIR/mock-bin:$PATH" /bin/sh "$TMP_DIR/pre-install-validate.sh" \
   > "$TMP_DIR/hook-success.log" 2>&1; then
   :
 else
   cat "$TMP_DIR/hook-success.log" >&2
-  echo "Pre-install validation rejected a labeled NetBox BMH namespace." >&2
+  echo "OSAC pre-install validation rejected valid prerequisites." >&2
   exit 1
 fi
-
-if MOCK_NAMESPACE_LABEL=missing MOCK_WATCH_ALL_NAMESPACES=true BMF_BMH_NAMESPACE=host-inventory \
-  PATH="$TMP_DIR/mock-bin:$PATH" /bin/sh "$TMP_DIR/pre-install-validate.sh" \
-  > "$TMP_DIR/hook-missing-label.log" 2>&1; then
-  echo "Pre-install validation accepted an unlabeled NetBox BMH namespace." >&2
-  exit 1
-fi
-rg -Fq "Label namespace host-inventory with osac.openshift.io/bmh-secret-namespace=true." \
-  "$TMP_DIR/hook-missing-label.log"
 
 assert_helm_failure "bmf.netbox.enabled and bmf.testBackend.metal3.enabled cannot both be true" \
   helm template osac "$OSAC_CHART" --values "$OSAC_CHART/ci/default-values.yaml" \
   --values "$TMP_DIR/osac-netbox-values.yaml" \
   --set bmf.testBackend.metal3.enabled=true
-assert_helm_failure "validation.enabled must be true when bmf.netbox.enabled is true" \
-  helm template osac "$OSAC_CHART" --values "$OSAC_CHART/ci/default-values.yaml" \
+helm template osac "$OSAC_CHART" --values "$OSAC_CHART/ci/default-values.yaml" \
   --values "$TMP_DIR/osac-netbox-values.yaml" \
-  --set validation.enabled=false
+  --set validation.enabled=false > "$TMP_DIR/osac-validation-disabled-render.yaml"
+rg -Fq "name: bmf-operator-netbox-ns-validation" "$TMP_DIR/osac-validation-disabled-render.yaml"
 assert_helm_failure "bmf.secretAPI.issuerUrl must match service.auth.issuerUrl when bmf.netbox.enabled is true" \
   helm template osac "$OSAC_CHART" --values "$OSAC_CHART/ci/default-values.yaml" \
   --values "$TMP_DIR/osac-netbox-values.yaml" \

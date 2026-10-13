@@ -7,6 +7,9 @@ image:
 
 replicaCount: 1
 
+validation:
+  cliImage: "quay.io/openshift/origin-cli:4.20.0"
+
 resources:
   limits:
     cpu: 500m

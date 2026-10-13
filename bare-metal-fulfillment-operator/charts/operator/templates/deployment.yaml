@@ -173,7 +173,7 @@ spec:
           secret:
             secretName: {{ .Values.secrets.netboxToken }}
             items:
-              - key: {{ .Values.netbox.tokenSecretKey }}
+              - key: {{ .Values.netbox.tokenSecretKey | quote }}
                 path: token
         {{- if .Values.netbox.caCert }}
         - name: netbox-ca

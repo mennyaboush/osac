@@ -2384,6 +2384,18 @@
           },
           "additionalProperties": false
         },
+        "validation": {
+          "type": "object",
+          "description": "BMF NetBox pre-install validation hook configuration",
+          "properties": {
+            "cliImage": {
+              "type": "string",
+              "description": "CLI image used to validate the NetBox BMH namespace label.",
+              "default": "quay.io/openshift/origin-cli:4.20.0"
+            }
+          },
+          "additionalProperties": false
+        },
         "fullnameOverride": {
           "type": "string",
           "description": "Override the full resource name for the BMF operator (subchart default)"
