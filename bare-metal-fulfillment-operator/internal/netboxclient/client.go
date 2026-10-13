@@ -145,11 +145,7 @@ func (c *Client) ForEachDevice(ctx context.Context, query DeviceQuery, visit fun
 			return c.fetchDevicePage(ctx, status, customFields, offset)
 		},
 		func(device netbox.DeviceWithConfigContext) (bool, error) {
-			mappedDevice, err := fromSDKDevice(device)
-			if err != nil {
-				return false, err
-			}
-			return visit(mappedDevice)
+			return visit(fromSDKDevice(device))
 		},
 	)
 }
@@ -317,13 +313,8 @@ func (c *Client) GetDevice(ctx context.Context, id string) (DeviceSnapshot, erro
 		return DeviceSnapshot{}, &APIError{Kind: ErrorKindInvalidResponse}
 	}
 
-	mappedDevice, err := fromSDKDevice(*device)
-	if err != nil {
-		return DeviceSnapshot{}, err
-	}
-
 	return DeviceSnapshot{
-		Device: mappedDevice,
+		Device: fromSDKDevice(*device),
 		ETag:   response.Header.Get("ETag"),
 	}, nil
 }
@@ -354,13 +345,8 @@ func (c *Client) PatchDevice(ctx context.Context, id string, patch DevicePatch, 
 		return DeviceSnapshot{}, &APIError{Kind: ErrorKindInvalidResponse}
 	}
 
-	mappedDevice, err := fromSDKDevice(*device)
-	if err != nil {
-		return DeviceSnapshot{}, err
-	}
-
 	return DeviceSnapshot{
-		Device: mappedDevice,
+		Device: fromSDKDevice(*device),
 		ETag:   response.Header.Get("ETag"),
 	}, nil
 }
@@ -546,11 +532,7 @@ func customFieldStatus(value any) string {
 	}
 }
 
-func fromSDKDevice(device netbox.DeviceWithConfigContext) (Device, error) {
-	if device.Id <= 0 {
-		return Device{}, &APIError{Kind: ErrorKindInvalidResponse}
-	}
-
+func fromSDKDevice(device netbox.DeviceWithConfigContext) Device {
 	status := ""
 	if device.Status != nil {
 		status = string(device.Status.GetValue())
@@ -560,7 +542,7 @@ func fromSDKDevice(device netbox.DeviceWithConfigContext) (Device, error) {
 		Name:         device.GetName(),
 		Status:       status,
 		CustomFields: cloneCustomFields(device.CustomFields),
-	}, nil
+	}
 }
 
 func cloneCustomFields(fields map[string]interface{}) map[string]interface{} {
