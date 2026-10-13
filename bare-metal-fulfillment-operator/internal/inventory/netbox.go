@@ -21,9 +21,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/netboxclient"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/shared"
 )
 
 const netBoxHostClass = "metal3"
@@ -117,8 +119,85 @@ func NewNetBoxClient(api NetBoxAPI, bmhManager baremetalhost.BMHLifecycleManager
 	}
 }
 
-func (*NetBoxClient) FindFreeHost(_ context.Context, _ map[string]string) (*Host, error) {
-	return nil, errNetBoxClientNotImplemented
+func (c *NetBoxClient) FindFreeHost(ctx context.Context, selector map[string]string) (*Host, error) {
+	capabilityFilters, err := resolveCapabilitySelector(selector)
+	if err != nil {
+		return nil, err
+	}
+	return c.findFreeHost(ctx, buildFreeHostQuery(capabilityFilters))
+}
+
+func (c *NetBoxClient) findFreeHost(ctx context.Context, query netboxclient.DeviceQuery) (*Host, error) {
+	namespace := ""
+	if c.bmhManager != nil {
+		namespace = c.bmhManager.Namespace()
+	}
+	if namespace == "" {
+		return nil, errors.New("NetBox inventory requires a Metal3 namespace")
+	}
+
+	var foundHost *Host
+	err := c.api.ForEachDevice(ctx, query, func(device netboxclient.Device) (bool, error) {
+		foundHost = netboxHostFromDevice(namespace, c.hostClass, device)
+		return false, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to search NetBox for a free host: %w", err)
+	}
+	return foundHost, nil
+}
+
+func netboxHostFromDevice(namespace, hostClass string, device netboxclient.Device) *Host {
+	name := "netbox-" + device.ID
+	return &Host{
+		InventoryHostID: fmt.Sprintf("%s/%s", namespace, name),
+		Name:            name,
+		HostClass:       hostClass,
+		ProvisionState:  shared.OsacDefaultProvisionStateValue,
+		ManagedBy:       shared.OsacDefaultManagedByValue,
+		Ready:           true,
+	}
+}
+
+func resolveCapabilitySelector(selector map[string]string) (netboxclient.DeviceQuery, error) {
+	if err := validateCapabilitySelectorKeys(selector); err != nil {
+		return nil, err
+	}
+	return buildCapabilityFilters(selector), nil
+}
+
+func buildFreeHostQuery(capabilityFilters netboxclient.DeviceQuery) netboxclient.DeviceQuery {
+	query := netboxclient.DeviceQuery{
+		"status":                     "staged",
+		"cf_osac_managed":            "true",
+		"cf_osac_instance_id__empty": "true",
+	}
+	for key, value := range capabilityFilters {
+		query[key] = value
+	}
+	return query
+}
+
+func buildCapabilityFilters(selector map[string]string) netboxclient.DeviceQuery {
+	filters := make(netboxclient.DeviceQuery, len(selector))
+	for key, value := range selector {
+		filters["cf_"+key] = value
+	}
+	return filters
+}
+
+func validateCapabilitySelectorKeys(selector map[string]string) error {
+	for key := range selector {
+		if strings.Contains(key, "__") {
+			return errors.New("NetBox capability selector contains an invalid requested field")
+		}
+		for _, field := range fixedNetBoxFields {
+			if key == field.name {
+				return errors.New("NetBox capability selector contains an invalid requested field")
+			}
+		}
+	}
+	return nil
 }
 
 func (*NetBoxClient) AssignHost(_ context.Context, _ string, _ string, _ map[string]string) (*Host, error) {

@@ -39,8 +39,8 @@ const (
 	maxInt32Offset        = int64(1<<31 - 1)
 )
 
-// DeviceQuery accepts the generated SDK's status filter and exact custom-field
-// query keys in NetBox's cf_<field> form.
+// DeviceQuery accepts the device status filter and custom-field query keys
+// in NetBox's cf_<field> form.
 type DeviceQuery map[string]string
 
 // Device contains the fields consumed by the BMF inventory adapter.
@@ -156,12 +156,15 @@ func (c *Client) fetchDevicePage(
 	customFields map[string]string,
 	offset int32,
 ) ([]netbox.DeviceWithConfigContext, int32, bool, error) {
-	page, _, err := c.listDevicePage(ctx, status, customFields, offset)
+	page, response, err := c.listDevicePage(ctx, status, customFields, offset)
 	if err != nil {
 		return nil, 0, false, err
 	}
-	if page == nil {
+	if page == nil || response == nil {
 		return nil, 0, false, &APIError{Kind: ErrorKindInvalidResponse}
+	}
+	if response.Body != nil {
+		defer func() { _ = response.Body.Close() }()
 	}
 	return page.Results, page.Count, page.GetNext() != "", nil
 }
@@ -513,19 +516,19 @@ func customFieldStatusPointer(properties map[string]interface{}) *string {
 	if !ok {
 		return nil
 	}
-	status, _ := customFieldStatus(rawStatus)
+	status := customFieldStatus(rawStatus)
 	return &status
 }
 
-func customFieldStatus(value any) (string, bool) {
+func customFieldStatus(value any) string {
 	switch value := value.(type) {
 	case string:
-		return value, true
+		return value
 	case map[string]interface{}:
-		status, ok := value["value"].(string)
-		return status, ok
+		status, _ := value["value"].(string)
+		return status
 	default:
-		return "", false
+		return ""
 	}
 }
 
