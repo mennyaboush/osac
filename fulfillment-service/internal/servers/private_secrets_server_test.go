@@ -927,7 +927,7 @@ var _ = Describe("Private secrets server", func() {
 				Expect(response.GetObject().GetData()).To(HaveKeyWithValue("key", []byte("value")))
 			})
 
-			It("lists only system Secrets and preserves caller filters for a configured reader", func() {
+			It("preserves shared Secret visibility and honors caller tenant filters for a configured reader", func() {
 				systemSecret := createSystemSecret("system-reader-list-secret")
 				sharedSecret := createSharedSecret("shared-reader-list-secret")
 				readerServer := newSystemSecretReaderServer()
@@ -935,17 +935,24 @@ var _ = Describe("Private secrets server", func() {
 				request := privatev1.SecretsListRequest_builder{}.Build()
 				response, err := readerServer.List(ctx, request)
 				Expect(err).ToNot(HaveOccurred())
-				Expect(response.GetItems()).To(HaveLen(1))
-				Expect(response.GetItems()[0].GetId()).To(Equal(systemSecret.GetId()))
-				Expect(response.GetItems()[0].GetMetadata().GetTenant()).To(Equal(auth.SystemTenant))
+				Expect(response.GetItems()).To(HaveLen(2))
 				Expect(request.GetFilter()).To(BeEmpty())
 
-				sharedSecretFilter := "this.id == '" + sharedSecret.GetId() + "'"
+				systemTenantFilter := "this.metadata.tenant == '" + auth.SystemTenant + "'"
 				response, err = readerServer.List(ctx, privatev1.SecretsListRequest_builder{
-					Filter: &sharedSecretFilter,
+					Filter: &systemTenantFilter,
 				}.Build())
 				Expect(err).ToNot(HaveOccurred())
-				Expect(response.GetItems()).To(BeEmpty())
+				Expect(response.GetItems()).To(HaveLen(1))
+				Expect(response.GetItems()[0].GetId()).To(Equal(systemSecret.GetId()))
+
+				sharedTenantFilter := "this.metadata.tenant == '" + auth.SharedTenant + "'"
+				response, err = readerServer.List(ctx, privatev1.SecretsListRequest_builder{
+					Filter: &sharedTenantFilter,
+				}.Build())
+				Expect(err).ToNot(HaveOccurred())
+				Expect(response.GetItems()).To(HaveLen(1))
+				Expect(response.GetItems()[0].GetId()).To(Equal(sharedSecret.GetId()))
 			})
 
 			It("does not let a configured system Secret reader retrieve shared or tenant Secrets", func() {

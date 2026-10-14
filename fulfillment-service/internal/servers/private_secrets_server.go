@@ -16,13 +16,11 @@ package servers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 
 	"github.com/prometheus/client_golang/prometheus"
 	grpccodes "google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
 
@@ -140,23 +138,6 @@ func (b *PrivateSecretsServerBuilder) Build() (result *PrivateSecretsServer, err
 // to fetch individual secrets with populated data.
 func (s *PrivateSecretsServer) List(ctx context.Context,
 	request *privatev1.SecretsListRequest) (response *privatev1.SecretsListResponse, err error) {
-	canReadSystemSecrets, err := s.canReadSystemSecrets(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if canReadSystemSecrets {
-		// The default visibility includes shared Secret metadata. Add a mandatory filter so the
-		// scoped reader's list results contain system Secrets only, even if it supplies its own filter.
-		request = proto.Clone(request).(*privatev1.SecretsListRequest)
-		filter := request.GetFilter()
-		systemTenantFilter := fmt.Sprintf("this.metadata.tenant == %q", auth.SystemTenant)
-		if filter != "" {
-			filter = "(" + filter + ") && " + systemTenantFilter
-		} else {
-			filter = systemTenantFilter
-		}
-		request.SetFilter(filter)
-	}
 	err = s.generic.List(ctx, request, &response)
 	return
 }
