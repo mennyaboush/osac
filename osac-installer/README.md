@@ -263,10 +263,11 @@ so networking resources reconcile to READY without a real fabric (kind has none)
   runtime for installer operations when `KIND_EXPERIMENTAL_PROVIDER` is unset;
   the latter takes precedence when both are provided.
 
-On an Apple Silicon Mac, either Kind profile automatically builds an arm64
-replacement for `quay.io/openshift/origin-cli:4.20.0` with the selected
-container runtime and loads it into the kind cluster before installing Helm
-charts. No manual image setup is required.
+On an Apple Silicon Mac, either Kind profile automatically builds arm64
+replacements for `quay.io/openshift/origin-cli:4.20.0` and
+`quay.io/openshift/origin-cli:4.22.0` with the selected container runtime and
+loads them into the kind cluster before installing Helm charts. No manual
+image setup is required.
 
 `dev-full` uses the normal `ghcr.io/osac-project/...:latest` image references, so
 the rendered deployment does not need a development-only registry name. The

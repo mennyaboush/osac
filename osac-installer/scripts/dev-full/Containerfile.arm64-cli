@@ -1,10 +1,12 @@
-# ARM64 replacement for quay.io/openshift/origin-cli:4.20.0, which has no
-# ARM64 manifest. The Containerfile is streamed into Podman Machine because
+# ARM64 replacement for amd64-only quay.io/openshift/origin-cli images.
+# The Containerfile is streamed into Podman Machine because
 # Podman Desktop's host-filesystem bridge cannot reliably provide build context.
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
+ARG OCP_VERSION=4.20.0
+
 RUN microdnf install -y tar gzip jq openssl python3 shadow-utils && \
-    curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/4.20.0/openshift-client-linux-arm64.tar.gz | tar -xz -C /usr/local/bin/ oc kubectl && \
+    curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_VERSION}/openshift-client-linux-arm64.tar.gz | tar -xz -C /usr/local/bin/ oc kubectl && \
     chmod +x /usr/local/bin/oc /usr/local/bin/kubectl && \
     microdnf clean all && \
     rm -rf /var/cache/dnf

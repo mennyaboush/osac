@@ -69,7 +69,7 @@ spec:
       serviceAccountName: {{ $validationName }}
       containers:
       - name: validate-bmh-namespace
-        image: {{ .Values.validation.cliImage | quote }}
+        image: {{ .Values.global.cliImage | quote }}
         env:
         - name: BMH_NAMESPACE
           value: {{ .Values.netbox.bmhNamespace | quote }}

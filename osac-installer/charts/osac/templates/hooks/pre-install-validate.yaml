@@ -65,12 +65,12 @@ spec:
           WATCH_ALL=$(kubectl get provisioning provisioning-configuration -o jsonpath='{.spec.watchAllNamespaces}' 2>/dev/null || true)
           if [ -z "$WATCH_ALL" ]; then
             echo "ERROR: provisioning-configuration CR not found."
-            echo "Metal3 backend requires provisioning-configuration with watchAllNamespaces: true."
+            echo "Metal3 BMH management requires provisioning-configuration with watchAllNamespaces: true."
             echo "Configure BareMetalOperator to watch all namespaces for BareMetalHost resources."
             exit 1
           elif [ "$WATCH_ALL" != "true" ]; then
             echo "ERROR: provisioning-configuration has watchAllNamespaces: ${WATCH_ALL}."
-            echo "Metal3 backend requires watchAllNamespaces: true on provisioning-configuration."
+            echo "Metal3 BMH management requires watchAllNamespaces: true on provisioning-configuration."
             echo "Set spec.watchAllNamespaces to true so BMO can discover BareMetalHost resources across namespaces."
             exit 1
           else

@@ -550,14 +550,6 @@ according to the different needs.
 
 ### Authorization Rules Overview
 
-#### NetBox-backed BMF Secret API
-
-The bundled `osac` realm defines the confidential client `osac-bmf`, enables service accounts,
-and assigns the `osac-bmf-secret-reader` realm role to its service account. The authorization
-policy checks that role in the validated JWT and allows only private Secrets `Get` and `List`
-calls for the `system` tenant. This Keycloak service-account identity is separate from the BMF
-operator's Kubernetes ServiceAccount.
-
 The authorization policy distinguishes between the following subject categories:
 
 1. **Admin Subjects**: Users with full access to all API methods. An account is considered admin if
@@ -578,6 +570,13 @@ The authorization policy distinguishes between the following subject categories:
    (`IdentityProviders/Create`, `Get`, `List`, `Update`, `Delete`). They cannot manage users.
 
 4. **Client Subjects**: All other authenticated users (JWT tokens from Keycloak that are not admin, tenant-admin, or tenant-idp-manager).
+
+#### NetBox-backed BMF Secret API
+
+The bundled `osac` realm defines the confidential client `osac-bmf`, enables service accounts,
+and assigns the `osac-bmf-secret-reader` realm role to its service account. The authorization
+policy checks that role in the validated JWT and allows only private Secrets `Get` and `List`
+calls for the `system` tenant.
 
 ### Authorization Logic
 

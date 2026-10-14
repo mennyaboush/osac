@@ -183,7 +183,8 @@ and `osac-infra`. Keys a chart doesn't recognize are ignored.
 | `bundledPostgres.database.name` | Bundled database name. | `service` |
 | `bundledPostgres.database.user` | Bundled database owner. | `service` |
 | `bundledVault.enabled` | Deploys an in-cluster OpenBao secret store for testing and CI. Set it to `false` for production and configure external Vault in the `osac` values file; see the [secrets management configuration guide](secrets-management-configuration.md). | `true` |
-| `cliImage` | The `oc` image that the chart hook jobs use. | `origin-cli:4.20.0` |
+| `cliImage` | The `oc` image used by existing umbrella chart hook jobs. | `origin-cli:4.20.0` |
+| `global.cliImage` | CLI image used by the BMF NetBox BMH namespace validation Job. The default matches the validated OCP 4.22 minor release. | `quay.io/openshift/origin-cli:4.22.0` |
 
 ## When Prerequisites Already Exist
 

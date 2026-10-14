@@ -118,10 +118,10 @@ endif
 # provider selection aligned.
 KIND_RUNTIME := scripts/dev-full/kind-runtime.sh
 KIND_ARM64_CLI_IMAGE := quay.io/openshift/origin-cli:4.20.0
+KIND_ARM64_CLI_IMAGE_CURRENT := quay.io/openshift/origin-cli:4.22.0
 
-# quay.io/openshift/origin-cli:4.20.0 has no arm64 manifest. On Apple Silicon,
-# build a compatible local image with the same tag so every chart can continue
-# using the shared cliImage value without platform-specific values files.
+# The 4.20 and 4.22 origin-cli tags are amd64-only; load local arm64 images
+# with matching tags on Apple Silicon.
 HOST_IS_MAC_ARM := $(shell if [ "$$(uname -s)" = "Darwin" ] && { [ "$$(uname -m)" = "arm64" ] || [ "$$(sysctl -in hw.optional.arm64 2>/dev/null)" = "1" ]; }; then echo true; fi)
 KIND_ARM64_CLI_IMAGE_SCRIPT := scripts/dev-full/build-arm64-cli-image.sh
 # Apple Silicon and dev-full use the runtime wrapper. Plain non-macOS dev
@@ -243,7 +243,8 @@ else
 	@kind export kubeconfig --name $(KIND_CLUSTER_NAME) --kubeconfig $(KIND_KUBECONFIG)
 endif
 ifeq ($(HOST_IS_MAC_ARM),true)
-	@$(KIND_RUNTIME_ENV) $(KIND_ARM64_CLI_IMAGE_SCRIPT) $(KIND_CLUSTER_NAME) $(KIND_ARM64_CLI_IMAGE)
+	@$(KIND_RUNTIME_ENV) $(KIND_ARM64_CLI_IMAGE_SCRIPT) $(KIND_CLUSTER_NAME) $(KIND_ARM64_CLI_IMAGE) 4.20.0
+	@$(KIND_RUNTIME_ENV) $(KIND_ARM64_CLI_IMAGE_SCRIPT) $(KIND_CLUSTER_NAME) $(KIND_ARM64_CLI_IMAGE_CURRENT) 4.22.0
 endif
 	helm upgrade --install cert-manager oci://quay.io/jetstack/charts/cert-manager \
 		--version v1.20.0 --namespace cert-manager --create-namespace \

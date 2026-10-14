@@ -7,8 +7,8 @@ image:
 
 replicaCount: 1
 
-validation:
-  cliImage: "quay.io/openshift/origin-cli:4.20.0"
+global:
+  cliImage: "quay.io/openshift/origin-cli:4.22.0"
 
 resources:
   limits:
@@ -71,7 +71,5 @@ bcm:
 
 metal3:
   enabled: false
-  # Namespace used when Metal3 is the inventory backend. NetBox configures its
-  # Metal3 management namespace under netbox.bmhNamespace.
   namespace: ""
   hostClass: "metal3"

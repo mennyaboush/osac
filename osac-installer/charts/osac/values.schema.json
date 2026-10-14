@@ -8,6 +8,11 @@
       "type": "object",
       "description": "Values propagated unchanged into every subchart, shared between the umbrella chart's own templates and its subcharts. Use global.networking as the primary networking configuration API.",
       "properties": {
+        "cliImage": {
+          "type": "string",
+          "description": "OpenShift CLI image for BMF NetBox BMH namespace validation; propagated to subcharts",
+          "default": "quay.io/openshift/origin-cli:4.22.0"
+        },
         "clusterDomain": {
           "type": "string",
           "description": "OpenShift cluster ingress domain (e.g. apps.mycluster.example.com). Backs the tpl-templated defaults for service.auth.issuerUrl, service.idp.url, and service.vault.keycloakIssuerUrl. Set via --set global.clusterDomain=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'). Leave empty on platforms (e.g. kind) that set those three values explicitly instead."
@@ -2380,18 +2385,6 @@
               "type": "string",
               "description": "Host class identifier for Metal3 inventory",
               "default": "metal3"
-            }
-          },
-          "additionalProperties": false
-        },
-        "validation": {
-          "type": "object",
-          "description": "BMF NetBox pre-install validation hook configuration",
-          "properties": {
-            "cliImage": {
-              "type": "string",
-              "description": "CLI image used to validate the NetBox BMH namespace label.",
-              "default": "quay.io/openshift/origin-cli:4.20.0"
             }
           },
           "additionalProperties": false
