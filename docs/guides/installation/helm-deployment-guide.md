@@ -173,7 +173,7 @@ and `osac-infra`. Keys a chart doesn't recognize are ignored.
 | `keycloak.devFixtures.enabled` | Seeds fixed, known passwords for the built-in test users. Must be `false` outside of evaluation. | `false` |
 | `keycloak.route.hostname` | External route host name for Keycloak. The installation sets it. | `""` |
 | `keycloak.route.publicIngress` | Changes the Keycloak route from `passthrough` to `reencrypt` for clusters with publicly trusted ingress certificates. See [Infrastructure Configuration](#infrastructure-configuration). | `false` |
-| `keycloak.realmOverwrite` | With `true`, updates an existing realm from the chart on upgrade. | `true` |
+| `keycloak.realmOverwrite` | Re-imports the realm definition on upgrade. | `true` |
 | `keycloak.images.keycloak` | Keycloak image. | `keycloak:26.6.4` |
 | `keycloak.images.postgres` | Keycloak database image. | `postgresql-18-c10s` |
 | `osacNamespace` | Namespace that the `osac` platform release uses. `osac-infra` stamps cross-namespace resources with it. Set it to your namespace. | `osac` |
@@ -227,8 +227,8 @@ mce:          { enabled: false }
   modify the existing installation.
 - `caIssuer.enabled: false` requires you to provide a `ClusterIssuer` and set
   `service.certs.issuerRef` in the phase-2 `my-values.yaml`.
-- `keycloak.enabled: false` requires an existing Keycloak with the `osac`
-  realm, clients, and roles configured.
+- `keycloak.enabled: false` requires a pre-configured Keycloak with the `osac`
+  realm, clients, and roles already set up.
 
 #### NetBox-backed BMF with an external or unchanged Keycloak realm
 
