@@ -479,7 +479,6 @@ bmf:
     url: ""
     tokenSecretKey: "token"
     tokenValue: ""
-    useExistingTokenSecret: false
     caCert: ""
     allowInsecureHTTP: false
   metal3:

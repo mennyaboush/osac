@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+import argparse
+import base64
 import os
 import pathlib
 import subprocess
 import tempfile
+import uuid
 from typing import Any
 
 import yaml
@@ -92,6 +95,12 @@ exit 1
 def helm_result(release: str, chart: pathlib.Path, *args: str) -> subprocess.CompletedProcess[str]:
     command = ["helm", "template", release, str(chart), *args]
     return subprocess.run(command, check=False, capture_output=True, text=True, cwd=INSTALLER_DIR)
+
+
+def kubectl(*args: str) -> None:
+    result = subprocess.run(["kubectl", *args], check=False, capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(f"kubectl failed:\n{result.stderr}")
 
 
 def render(release: str, chart: pathlib.Path, *args: str) -> list[dict[str, Any]]:
@@ -369,6 +378,107 @@ def check_bmf_invalid_values(netbox_values: pathlib.Path) -> None:
     assert inventory["options"]["netbox"]["allowInsecureHTTP"] is True
 
 
+def check_bmf_netbox_secret_lookup(netbox_values: pathlib.Path) -> None:
+    namespace = f"bmf-netbox-lookup-{uuid.uuid4().hex[:8]}"
+    release = "bmf-netbox-lookup"
+    secret_name = "custom-netbox-token"
+
+    def create_secret(value: str, *, key: str = "token", owned_by_release: bool = False) -> None:
+        kubectl(
+            "create", "secret", "generic", secret_name, "--namespace", namespace, "--from-literal", f"{key}={value}"
+        )
+        kubectl(
+            "annotate",
+            "secret",
+            secret_name,
+            "--namespace",
+            namespace,
+            "osac.openshift.io/tenant=bmf-netbox-lookup",
+            "osac.openshift.io/owner-reference=bmf-netbox-lookup",
+        )
+        if owned_by_release:
+            kubectl("label", "secret", secret_name, "--namespace", namespace, "app.kubernetes.io/managed-by=Helm")
+            kubectl(
+                "annotate",
+                "secret",
+                secret_name,
+                "--namespace",
+                namespace,
+                f"meta.helm.sh/release-name={release}",
+                f"meta.helm.sh/release-namespace={namespace}",
+            )
+
+    def server_render() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "helm",
+                "template",
+                release,
+                str(BMF_CHART),
+                "--namespace",
+                namespace,
+                "--dry-run=server",
+                "--show-only",
+                "templates/netbox-secrets.yaml",
+                "--values",
+                str(netbox_values),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=INSTALLER_DIR,
+        )
+
+    def server_docs() -> list[dict[str, Any]]:
+        result = server_render()
+        if result.returncode:
+            raise RuntimeError(f"Server-side Helm render failed:\n{result.stderr}")
+        return [doc for doc in yaml.safe_load_all(result.stdout) if isinstance(doc, dict)]
+
+    try:
+        kubectl("create", "namespace", namespace)
+        kubectl(
+            "annotate",
+            "namespace",
+            namespace,
+            "osac.openshift.io/tenant=bmf-netbox-lookup",
+            "osac.openshift.io/owner-reference=bmf-netbox-lookup",
+        )
+
+        create_secret("existing-token", owned_by_release=True)
+        managed_docs = server_docs()
+        managed_secret = resource(managed_docs, "Secret", secret_name)
+        assert managed_secret["data"]["token"] == base64.b64encode(b"existing-token").decode(), (
+            "Helm lookup did not preserve data from the current release's Secret"
+        )
+        assert "stringData" not in managed_secret, "Helm lookup replaced existing Secret data"
+
+        kubectl("delete", "secret", secret_name, "--namespace", namespace)
+        create_secret("external-token")
+        external_docs = server_docs()
+        assert_resource_absent(external_docs, "Secret", secret_name)
+
+        kubectl("delete", "secret", secret_name, "--namespace", namespace)
+        create_secret("wrong-key", key="other")
+        missing_key = server_render()
+        assert missing_key.returncode != 0, "Helm accepted an existing token Secret without the configured key"
+        assert "must contain key" in missing_key.stderr, "Helm failed without identifying the missing Secret key"
+
+        kubectl("delete", "secret", secret_name, "--namespace", namespace)
+        fallback_docs = server_docs()
+        fallback_secret = resource(fallback_docs, "Secret", secret_name)
+        assert fallback_secret["stringData"]["token"] == "render-test-netbox-token", (
+            "Helm did not create the token Secret from netbox.tokenValue when lookup found no Secret"
+        )
+    finally:
+        subprocess.run(
+            ["kubectl", "delete", "namespace", namespace, "--ignore-not-found=true", "--wait=false"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+
 def check_osac_wiring(temp_dir: pathlib.Path) -> tuple[list[dict[str, Any]], pathlib.Path]:
     values_path = temp_dir / "osac-netbox-values.yaml"
     values_path.write_text(OSAC_NETBOX_VALUES, encoding="utf-8")
@@ -493,10 +603,23 @@ def check_validation_scripts(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--live-lookup-only",
+        action="store_true",
+        help="exercise NetBox Secret lookup against the current Kubernetes cluster",
+    )
+    args = parser.parse_args()
+
     with tempfile.TemporaryDirectory(prefix="bmf-netbox-render-") as temp:
         temp_dir = pathlib.Path(temp)
         netbox_values = temp_dir / "netbox-values.yaml"
         netbox_values.write_text(BMF_NETBOX_VALUES, encoding="utf-8")
+
+        if args.live_lookup_only:
+            check_bmf_netbox_secret_lookup(netbox_values)
+            print("BMF NetBox Secret lookup checks passed.")
+            return
 
         bmf_docs = bmf_render("--values", str(netbox_values))
         check_bmf_netbox(bmf_docs)

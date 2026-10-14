@@ -246,6 +246,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Python
+        uses: ./.github/actions/setup-python
+
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -268,6 +271,11 @@ jobs:
         env:
           CONTAINER_TOOL: docker
         run: make -C osac-installer install-infra PLATFORM=kind PROFILE=dev NS=osac
+
+      - name: Test BMF NetBox Secret lookup
+        run: |
+          export KUBECONFIG="$HOME/.kube/osac-dev-kind.kubeconfig"
+          uv run --project . python osac-installer/scripts/test-bmf-netbox-render.py --live-lookup-only
 
       - name: Run integration tests
         env:

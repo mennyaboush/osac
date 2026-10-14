@@ -11,12 +11,6 @@
 {{- if not .Values.netbox.url }}
 {{- fail "netbox.url is required when netbox.enabled is true" }}
 {{- end }}
-{{- if and (not .Values.netbox.useExistingTokenSecret) (not .Values.netbox.tokenValue) }}
-{{- fail "netbox.tokenValue is required when netbox.enabled is true" }}
-{{- end }}
-{{- if and .Values.netbox.useExistingTokenSecret .Values.netbox.tokenValue }}
-{{- fail "netbox.tokenValue must be empty when netbox.useExistingTokenSecret is true" }}
-{{- end }}
 {{- if not .Values.netbox.tokenSecretKey }}
 {{- fail "netbox.tokenSecretKey is required when netbox.enabled is true" }}
 {{- end }}

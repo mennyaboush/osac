@@ -2149,7 +2149,7 @@
             },
             "netboxToken": {
               "type": "string",
-              "description": "Name of the NetBox API token Secret. The chart creates it unless bmf.netbox.useExistingTokenSecret is true.",
+              "description": "Name of the NetBox API token Secret. The chart uses it if present in the BMF release namespace; otherwise it creates it from bmf.netbox.tokenValue.",
               "default": "osac-netbox-token"
             },
             "netboxCA": {
@@ -2347,13 +2347,8 @@
             },
             "tokenValue": {
               "type": "string",
-              "description": "Inline NetBox API token stored under tokenSecretKey when the chart creates the Secret. Leave empty when useExistingTokenSecret is true.",
+              "description": "NetBox API token stored under tokenSecretKey when the named Secret does not already exist.",
               "default": ""
-            },
-            "useExistingTokenSecret": {
-              "type": "boolean",
-              "description": "Use the pre-created Secret named by bmf.secrets.netboxToken in the BMF release namespace and read bmf.netbox.tokenSecretKey instead of creating a Secret from bmf.netbox.tokenValue.",
-              "default": false
             },
             "caCert": {
               "type": "string",

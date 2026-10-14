@@ -410,9 +410,8 @@ bmf:
 # osac.openshift.io/bmh-secret-namespace=true before installing.
 #   kubectl label namespace <name> osac.openshift.io/bmh-secret-namespace=true
 # Override bmf.secrets.netboxToken/netboxCA if custom Secret names are needed.
-# When bmf.netbox.useExistingTokenSecret is true, create the token Secret in
-# the BMF release namespace before installation; it must contain the key named by
-# bmf.netbox.tokenSecretKey (default: "token").
+# An existing token Secret in the BMF release namespace is reused; otherwise
+# the chart creates it from tokenValue. It must contain tokenSecretKey (default: "token").
   netbox:
     enabled: false
     # [REQUIRED when enabled] Namespace containing Metal3 BareMetalHosts and BMC Secrets.
@@ -421,12 +420,8 @@ bmf:
     url: ""
     # Key inside the NetBox token Secret that contains the API token.
     tokenSecretKey: "token"
-    # [REQUIRED unless useExistingTokenSecret is true] Token value stored in a
-    # dedicated Secret and mounted read-only. Leave empty when using an existing Secret.
+    # Used only when the Secret named by bmf.secrets.netboxToken does not exist.
     tokenValue: ""
-    # Use the pre-created Secret named by bmf.secrets.netboxToken instead of
-    # creating it from tokenValue. Leave tokenValue empty when this is true.
-    useExistingTokenSecret: false
     # [OPTIONAL] PEM CA certificate stored in a dedicated Secret and mounted read-only.
     caCert: ""
     # HTTP endpoints are disabled unless this explicit opt-in is true.
