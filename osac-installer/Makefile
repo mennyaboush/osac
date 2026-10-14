@@ -574,7 +574,7 @@ dev-full-render-test: helm-deps ## Check dev-full TLS and Helm post-rendering
 
 .PHONY: bmf-netbox-render-test
 bmf-netbox-render-test: helm-deps ## Check NetBox, Metal3 management, and Secret API Helm wiring
-	bash scripts/test-bmf-netbox-render.sh
+	uv run --project .. python scripts/test-bmf-netbox-render.py
 
 .PHONY: helm-validate
 helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test mce-render-test dev-full-render-test bmf-netbox-render-test ## Validate all charts (lint + template)
