@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"strings"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
@@ -165,18 +164,13 @@ func netboxHostFromDevice(namespace, hostClass string, device netboxclient.Devic
 }
 
 func buildFreeHostQuery(selector map[string]string) netboxclient.DeviceQuery {
-	capabilityFilters := make(netboxclient.DeviceQuery, len(selector))
+	query := make(netboxclient.DeviceQuery, len(selector)+3)
 	for key, value := range selector {
-		capabilityFilters["cf_"+key] = value
+		query["cf_"+key] = value
 	}
-	commonSelectors := netboxclient.DeviceQuery{
-		"status":                     "staged",
-		"cf_osac_managed":            "true",
-		"cf_osac_instance_id__empty": "true",
-	}
-	query := make(netboxclient.DeviceQuery, len(capabilityFilters)+len(commonSelectors))
-	maps.Copy(query, capabilityFilters)
-	maps.Copy(query, commonSelectors)
+	query["status"] = "staged"
+	query["cf_osac_managed"] = "true"
+	query["cf_osac_instance_id__empty"] = "true"
 	return query
 }
 
@@ -288,6 +282,14 @@ func (c *NetBoxClient) reconcileNetBoxClaimConflict(ctx context.Context, namespa
 }
 
 func netBoxAssignmentForDevice(namespace, hostClass string, device netboxclient.Device, bareMetalInstanceID string) (*Host, bool, error) {
+	managed, ok := device.CustomFields["osac_managed"].(bool)
+	if !ok {
+		return nil, false, errors.New("NetBox device has a missing or malformed osac_managed custom field")
+	}
+	if !managed {
+		return nil, false, nil
+	}
+
 	owner, err := netBoxInstanceOwner(device)
 	if err != nil {
 		return nil, false, err

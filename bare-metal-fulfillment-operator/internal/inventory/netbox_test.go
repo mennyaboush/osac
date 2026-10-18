@@ -150,6 +150,8 @@ type selectorQueryTestAPI struct {
 	deviceErr        error
 	deviceVisits     int
 	customFieldReads int
+	deviceSnapshot   netboxclient.DeviceSnapshot
+	patchCalls       int
 }
 
 func (a *selectorQueryTestAPI) ForEachDevice(
@@ -186,16 +188,17 @@ func (a *selectorQueryTestAPI) ForEachDeviceCustomField(
 	return errors.New("unexpected custom-field metadata lookup")
 }
 
-func (*selectorQueryTestAPI) GetDevice(context.Context, string) (netboxclient.DeviceSnapshot, error) {
-	return netboxclient.DeviceSnapshot{}, nil
+func (a *selectorQueryTestAPI) GetDevice(context.Context, string) (netboxclient.DeviceSnapshot, error) {
+	return a.deviceSnapshot, nil
 }
 
-func (*selectorQueryTestAPI) PatchDevice(
+func (a *selectorQueryTestAPI) PatchDevice(
 	context.Context,
 	string,
 	netboxclient.DevicePatch,
 	string,
 ) (netboxclient.DeviceSnapshot, error) {
+	a.patchCalls++
 	return netboxclient.DeviceSnapshot{}, nil
 }
 
@@ -324,6 +327,37 @@ var _ = Describe("NetBox selector query", func() {
 		)
 
 	})
+})
+
+var _ = Describe("NetBox assignment eligibility", func() {
+	DescribeTable("does not claim a staged device unless it is explicitly managed",
+		func(customFields map[string]interface{}, wantErr bool) {
+			api := &selectorQueryTestAPI{
+				deviceSnapshot: netboxclient.DeviceSnapshot{
+					Device: netboxclient.Device{
+						ID:           "46",
+						Status:       "staged",
+						CustomFields: customFields,
+					},
+					ETag: `W/"device-revision-1"`,
+				},
+			}
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), netBoxHostClass)
+
+			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+			Expect(host).To(BeNil())
+			if wantErr {
+				Expect(err).To(MatchError(ContainSubstring("osac_managed")))
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(api.patchCalls).To(BeZero())
+		},
+		Entry("unmanaged", map[string]interface{}{"osac_managed": false}, false),
+		Entry("missing managed field", map[string]interface{}{"osac_instance_id": ""}, true),
+		Entry("malformed managed field", map[string]interface{}{"osac_managed": "true"}, true),
+	)
 })
 
 func testNetBoxSelectorBMHManager() *baremetalhost.Manager {
