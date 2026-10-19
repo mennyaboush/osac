@@ -18,9 +18,12 @@ package inventory
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +37,35 @@ import (
 )
 
 const testNetBoxHostClass = "metal3"
+
+var _ = Describe("NetBox Secret API client", func() {
+	It("exchanges client credentials for a bearer token", func() {
+		type tokenRequest struct {
+			path, clientID, clientSecret, grantType string
+		}
+		requests := make(chan tokenRequest, 1)
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "invalid form", http.StatusBadRequest)
+				return
+			}
+			clientID, clientSecret, _ := r.BasicAuth()
+			requests <- tokenRequest{r.URL.Path, clientID, clientSecret, r.Form.Get("grant_type")}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("{\"access_token\":\"test-access-token\",\"token_type\":\"Bearer\",\"expires_in\":3600}"))
+		}))
+		defer server.Close()
+
+		roots := x509.NewCertPool()
+		roots.AddCert(server.Certificate())
+		tokenSource := netBoxSecretAPITokenSource("osac-bmf", "client-secret", server.URL+"/realms/osac/", &tls.Config{RootCAs: roots})
+		token, err := tokenSource.Token()
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(token.AccessToken).To(Equal("test-access-token"))
+		Expect(<-requests).To(Equal(tokenRequest{"/realms/osac/protocol/openid-connect/token", "osac-bmf", "client-secret", "client_credentials"}))
+	})
+})
 
 var _ = Describe("NetBox inventory client", func() {
 	Describe("GetHostLogicalPortMACs", func() {
@@ -96,7 +128,7 @@ var _ = Describe("NetBox inventory client", func() {
 			Expect(api).NotTo(BeNil())
 
 			manager := baremetalhost.NewManager(nil, nil, "metal3-system")
-			client := NewNetBoxClient(api, manager, testNetBoxHostClass)
+			client := NewNetBoxClient(api, manager, testNetBoxHostClass, nil)
 
 			Expect(client.api).To(BeIdenticalTo(api))
 			Expect(client.bmhManager).To(BeIdenticalTo(manager))
