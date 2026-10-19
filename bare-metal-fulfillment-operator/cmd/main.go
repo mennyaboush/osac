@@ -55,6 +55,7 @@ import (
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/inventory"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/management"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/profile"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/secretapi"
 	"github.com/osac-project/osac/osac-operator/pkg/aap"
 	"github.com/osac-project/osac/osac-operator/pkg/provisioning"
 	// +kubebuilder:scaffold:imports
@@ -599,7 +600,7 @@ func createNetBoxInventoryClientWithManager(
 	if err != nil {
 		return nil, fmt.Errorf("failed to create NetBox inventory client: %w", err)
 	}
-	secretsClient, err := createNetBoxSecretAPIClientFromEnv()
+	secretsClient, err := createSecretAPIClientFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Secret API client for NetBox inventory: %w", err)
 	}
@@ -608,9 +609,9 @@ func createNetBoxInventoryClientWithManager(
 	return inventory.NewNetBoxClient(netBoxAPI, bmhManager, inventoryCfg.HostClass, secretsClient), nil
 }
 
-func createNetBoxSecretAPIClientFromEnv() (*inventory.NetBoxSecretAPIClient, error) {
-	return inventory.NewNetBoxSecretAPIClient(inventory.NetBoxSecretAPIConfig{
-		URL:              os.Getenv(envSecretAPIURL),
+func createSecretAPIClientFromEnv() (*secretapi.Client, error) {
+	return secretapi.New(secretapi.Config{
+		Endpoint:         os.Getenv(envSecretAPIURL),
 		IssuerURL:        os.Getenv(envSecretAPIIssuerURL),
 		ClientIDFile:     os.Getenv(envSecretAPIClientIDFile),
 		ClientSecretFile: os.Getenv(envSecretAPIClientSecretFile),
