@@ -29,8 +29,9 @@ import (
 )
 
 const (
-	netBoxHostClass  = "metal3"
-	netBoxHostPrefix = "netbox-"
+	netBoxHostPrefix   = "netbox-"
+	netBoxStatusActive = "active"
+	netBoxStatusStaged = "staged"
 )
 
 var errNetBoxClientNotImplemented = errors.New("NetBox inventory client is not implemented")
@@ -133,7 +134,7 @@ func (c *NetBoxClient) findFreeHost(ctx context.Context, query netboxclient.Devi
 
 	var foundHost *Host
 	err = c.api.ForEachDevice(ctx, query, func(device netboxclient.Device) (bool, error) {
-		foundHost = netboxHostFromDevice(namespace, c.hostClass, device)
+		foundHost = c.netBoxHostFromDevice(namespace, device)
 		return false, nil
 	})
 	if err != nil {
@@ -151,12 +152,12 @@ func (c *NetBoxClient) metal3Namespace() (string, error) {
 	return "", errors.New("NetBox inventory requires a Metal3 namespace")
 }
 
-func netboxHostFromDevice(namespace, hostClass string, device netboxclient.Device) *Host {
+func (c *NetBoxClient) netBoxHostFromDevice(namespace string, device netboxclient.Device) *Host {
 	name := netBoxHostPrefix + device.ID
 	return &Host{
 		InventoryHostID: fmt.Sprintf("%s/%s", namespace, name),
 		Name:            name,
-		HostClass:       hostClass,
+		HostClass:       c.hostClass,
 		ProvisionState:  shared.OsacDefaultProvisionStateValue,
 		ManagedBy:       shared.OsacDefaultManagedByValue,
 		Ready:           true,
@@ -168,7 +169,7 @@ func buildFreeHostQuery(selector map[string]string) netboxclient.DeviceQuery {
 	for key, value := range selector {
 		query["cf_"+key] = value
 	}
-	query["status"] = "staged"
+	query["status"] = netBoxStatusStaged
 	query["cf_osac_managed"] = "true"
 	query["cf_osac_instance_id__empty"] = "true"
 	return query
@@ -225,7 +226,7 @@ func (c *NetBoxClient) readNetBoxDevice(ctx context.Context, deviceID string) (n
 }
 
 func (c *NetBoxClient) assignNetBoxDevice(ctx context.Context, namespace, deviceID, bareMetalInstanceID string, snapshot netboxclient.DeviceSnapshot) (*Host, error) {
-	host, claimable, err := netBoxAssignmentForDevice(namespace, c.hostClass, snapshot.Device, bareMetalInstanceID)
+	host, claimable, err := c.netBoxAssignmentForDevice(namespace, snapshot.Device, bareMetalInstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +240,7 @@ func (c *NetBoxClient) assignNetBoxDevice(ctx context.Context, namespace, device
 }
 
 func (c *NetBoxClient) claimNetBoxDevice(ctx context.Context, namespace, deviceID, bareMetalInstanceID, etag string) (*Host, error) {
-	active := "active"
+	active := netBoxStatusActive
 	claimed, err := c.api.PatchDevice(ctx, deviceID, netboxclient.DevicePatch{
 		Status:       &active,
 		CustomFields: map[string]interface{}{"osac_instance_id": bareMetalInstanceID},
@@ -254,7 +255,7 @@ func (c *NetBoxClient) claimNetBoxDevice(ctx context.Context, namespace, deviceI
 	if claimed.Device.ID != deviceID {
 		return nil, errors.New("NetBox returned a different device after the claim")
 	}
-	host, _, err := netBoxAssignmentForDevice(namespace, c.hostClass, claimed.Device, bareMetalInstanceID)
+	host, _, err := c.netBoxAssignmentForDevice(namespace, claimed.Device, bareMetalInstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +270,7 @@ func (c *NetBoxClient) reconcileNetBoxClaimConflict(ctx context.Context, namespa
 	if err != nil {
 		return nil, fmt.Errorf("failed to re-read NetBox device after a claim conflict: %w", err)
 	}
-	host, claimable, err := netBoxAssignmentForDevice(namespace, c.hostClass, latest.Device, bareMetalInstanceID)
+	host, claimable, err := c.netBoxAssignmentForDevice(namespace, latest.Device, bareMetalInstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +282,7 @@ func (c *NetBoxClient) reconcileNetBoxClaimConflict(ctx context.Context, namespa
 	return nil, errors.New("NetBox device changed during assignment; retry on the next reconciliation")
 }
 
-func netBoxAssignmentForDevice(namespace, hostClass string, device netboxclient.Device, bareMetalInstanceID string) (*Host, bool, error) {
+func (c *NetBoxClient) netBoxAssignmentForDevice(namespace string, device netboxclient.Device, bareMetalInstanceID string) (*Host, bool, error) {
 	managed, ok := device.CustomFields["osac_managed"].(bool)
 	if !ok {
 		return nil, false, errors.New("NetBox device has a missing or malformed osac_managed custom field")
@@ -290,28 +291,36 @@ func netBoxAssignmentForDevice(namespace, hostClass string, device netboxclient.
 		return nil, false, nil
 	}
 
-	owner, err := netBoxInstanceOwner(device)
+	owner, claimable, err := netBoxDeviceAssignmentState(device)
 	if err != nil {
 		return nil, false, err
 	}
-	if device.Status == "" {
-		return nil, false, errors.New("NetBox device has no status")
+	if claimable || owner != bareMetalInstanceID {
+		return nil, claimable, nil
 	}
-	if owner == "" {
-		if device.Status == "active" {
-			return nil, false, errors.New("NetBox device is active without an assigned instance")
-		}
-		return nil, device.Status == "staged", nil
-	}
-	if device.Status != "active" {
-		return nil, false, errors.New("NetBox device has an assigned instance but is not active")
-	}
-	if owner != bareMetalInstanceID {
-		return nil, false, nil
-	}
-	host := netboxHostFromDevice(namespace, hostClass, device)
+	host := c.netBoxHostFromDevice(namespace, device)
 	host.BareMetalInstanceID = owner
 	return host, false, nil
+}
+
+func netBoxDeviceAssignmentState(device netboxclient.Device) (string, bool, error) {
+	owner, err := netBoxInstanceOwner(device)
+	if err != nil {
+		return "", false, err
+	}
+	if device.Status == "" {
+		return "", false, errors.New("NetBox device has no status")
+	}
+	if owner == "" {
+		if device.Status == netBoxStatusActive {
+			return "", false, errors.New("NetBox device is active without an assigned instance")
+		}
+		return owner, device.Status == netBoxStatusStaged, nil
+	}
+	if device.Status != netBoxStatusActive {
+		return "", false, errors.New("NetBox device has an assigned instance but is not active")
+	}
+	return owner, false, nil
 }
 
 func netBoxInstanceOwner(device netboxclient.Device) (string, error) {

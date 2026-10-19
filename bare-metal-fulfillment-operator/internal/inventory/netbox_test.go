@@ -31,6 +31,8 @@ import (
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/shared"
 )
 
+const testNetBoxHostClass = "metal3"
+
 var _ = Describe("NetBox inventory client", func() {
 	Describe("GetHostLogicalPortMACs", func() {
 		It("returns a not-implemented error", func() {
@@ -92,12 +94,12 @@ var _ = Describe("NetBox inventory client", func() {
 			Expect(api).NotTo(BeNil())
 
 			manager := baremetalhost.NewManager(nil, nil, "metal3-system")
-			client := NewNetBoxClient(api, manager, netBoxHostClass)
+			client := NewNetBoxClient(api, manager, testNetBoxHostClass)
 
 			Expect(client.api).To(BeIdenticalTo(api))
 			Expect(client.bmhManager).To(BeIdenticalTo(manager))
 			Expect(client.bmhManager.Namespace()).To(Equal("metal3-system"))
-			Expect(client.hostClass).To(Equal(netBoxHostClass))
+			Expect(client.hostClass).To(Equal(testNetBoxHostClass))
 		})
 	})
 
@@ -206,7 +208,7 @@ var _ = Describe("NetBox selector query", func() {
 	Describe("FindFreeHost", func() {
 		It("returns an error when the Metal3 namespace is missing without querying NetBox", func() {
 			api := &selectorQueryTestAPI{}
-			client := NewNetBoxClient(api, baremetalhost.NewManager(nil, nil, ""), netBoxHostClass)
+			client := NewNetBoxClient(api, baremetalhost.NewManager(nil, nil, ""), testNetBoxHostClass)
 
 			host, err := client.FindFreeHost(context.Background(), nil)
 
@@ -222,7 +224,7 @@ var _ = Describe("NetBox selector query", func() {
 					{ID: "47", Name: "netbox-device-47"},
 				},
 			}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), netBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
 			selector := map[string]string{
 				"cpu_cores":      "9007199254740993",
 				"accelerated":    "true",
@@ -236,7 +238,7 @@ var _ = Describe("NetBox selector query", func() {
 			Expect(host).To(Equal(&Host{
 				InventoryHostID: "metal3-system/netbox-46",
 				Name:            "netbox-46",
-				HostClass:       netBoxHostClass,
+				HostClass:       testNetBoxHostClass,
 				ProvisionState:  shared.OsacDefaultProvisionStateValue,
 				ManagedBy:       shared.OsacDefaultManagedByValue,
 				Ready:           true,
@@ -257,7 +259,7 @@ var _ = Describe("NetBox selector query", func() {
 
 		It("keeps the required managed filter when the selector requests another value", func() {
 			api := &selectorQueryTestAPI{}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), netBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
 
 			_, err := client.FindFreeHost(context.Background(), map[string]string{"osac_managed": "false"})
 
@@ -268,7 +270,7 @@ var _ = Describe("NetBox selector query", func() {
 
 		It("queries the fixed free-host filters when the selector is empty", func() {
 			api := &selectorQueryTestAPI{}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), netBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
 
 			host, err := client.FindFreeHost(context.Background(), nil)
 
@@ -286,7 +288,7 @@ var _ = Describe("NetBox selector query", func() {
 		It("returns device-list errors", func() {
 			apiError := errors.New("device endpoint unavailable")
 			api := &selectorQueryTestAPI{deviceErr: apiError}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), netBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
 
 			host, err := client.FindFreeHost(context.Background(), map[string]string{"placement_zone": "west"})
 
@@ -342,7 +344,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 					ETag: `W/"device-revision-1"`,
 				},
 			}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), netBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
 
 			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
