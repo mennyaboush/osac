@@ -29,7 +29,7 @@ var (
 	errInvalidEndpoint        = errors.New("NetBox endpoint must be an HTTP or HTTPS origin")
 	errInsecureHTTPNotAllowed = errors.New("NetBox HTTP endpoints require AllowInsecureHTTP")
 	errInvalidToken           = errors.New("NetBox API token file is missing or invalid")
-	errInvalidCA              = errors.New("NetBox CA file is missing or invalid")
+	errInvalidCA              = errors.New("CA file is missing or invalid")
 )
 
 // Config contains the filesystem and endpoint settings for the NetBox API.
@@ -111,21 +111,25 @@ func readToken(tokenFile string) (string, error) {
 	return token, nil
 }
 
-func newTLSConfig(caFile string) (*tls.Config, error) {
+// NewTLSConfig builds a TLS config from system roots and an optional CA file.
+func NewTLSConfig(caFile string) (*tls.Config, error) {
 	roots, err := x509.SystemCertPool()
 	if err != nil || roots == nil {
-		return nil, errors.New("failed to load system TLS roots for NetBox")
+		return nil, errors.New("failed to load system TLS roots")
 	}
-
-	if caFile != "" {
-		caPEM, err := os.ReadFile(caFile)
-		if err != nil || !roots.AppendCertsFromPEM(caPEM) {
-			return nil, errInvalidCA
-		}
+	if err := appendCAFile(roots, caFile); err != nil {
+		return nil, err
 	}
+	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}, nil
+}
 
-	return &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		RootCAs:    roots,
-	}, nil
+func appendCAFile(roots *x509.CertPool, caFile string) error {
+	if caFile == "" {
+		return nil
+	}
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil || !roots.AppendCertsFromPEM(caPEM) {
+		return errInvalidCA
+	}
+	return nil
 }

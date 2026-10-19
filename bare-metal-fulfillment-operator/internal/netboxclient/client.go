@@ -92,7 +92,7 @@ func New(config Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig, err := newTLSConfig(config.CAFile)
+	tlsConfig, err := NewTLSConfig(config.CAFile)
 	if err != nil {
 		return nil, err
 	}
