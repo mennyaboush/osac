@@ -39,6 +39,41 @@ import (
 const testNetBoxHostClass = "metal3"
 
 var _ = Describe("NetBox Secret API client", func() {
+	DescribeTable("validates the issuer URL",
+		func(issuerURL string, wantErr bool) {
+			config := NetBoxSecretAPIConfig{
+				URL:              "https://secrets.example.test",
+				IssuerURL:        issuerURL,
+				ClientIDFile:     "/client-id",
+				ClientSecretFile: "/client-secret",
+			}
+			err := config.validate()
+			if wantErr {
+				Expect(err).To(MatchError("issuer must be a secure HTTPS URL without user info, query, or fragment"))
+				return
+			}
+			Expect(err).NotTo(HaveOccurred())
+		},
+		Entry("accepts HTTPS", "https://keycloak.example.test/realms/osac", false),
+		Entry("rejects HTTP", "http://keycloak.example.test/realms/osac", true),
+		Entry("requires a host", "https:///realms/osac", true),
+		Entry("rejects user info", "https://user:password@keycloak.example.test/realms/osac", true),
+		Entry("rejects query parameters", "https://keycloak.example.test/realms/osac?tenant=shared", true),
+		Entry("rejects fragments", "https://keycloak.example.test/realms/osac#token", true),
+		Entry("rejects malformed URLs", "https://%zz/realms/osac", true),
+	)
+
+	It("rejects an HTTP issuer before reading credentials", func() {
+		_, err := NewNetBoxSecretAPIClient(NetBoxSecretAPIConfig{
+			URL:              "https://secrets.example.test",
+			IssuerURL:        "http://keycloak.example.test/realms/osac",
+			ClientIDFile:     "/missing/client-id",
+			ClientSecretFile: "/missing/client-secret",
+		})
+
+		Expect(err).To(MatchError("issuer must be a secure HTTPS URL without user info, query, or fragment"))
+	})
+
 	It("exchanges client credentials for a bearer token", func() {
 		type tokenRequest struct {
 			path, clientID, clientSecret, grantType string
@@ -64,6 +99,32 @@ var _ = Describe("NetBox Secret API client", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(token.AccessToken).To(Equal("test-access-token"))
 		Expect(<-requests).To(Equal(tokenRequest{"/realms/osac/protocol/openid-connect/token", "osac-bmf", "client-secret", "client_credentials"}))
+	})
+
+	It("does not follow token endpoint redirects", func() {
+		redirected := make(chan struct{}, 1)
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			redirected <- struct{}{}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer target.Close()
+
+		issuer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+		}))
+		defer issuer.Close()
+
+		roots := x509.NewCertPool()
+		roots.AddCert(issuer.Certificate())
+		tokenSource := netBoxSecretAPITokenSource("osac-bmf", "client-secret", issuer.URL+"/realms/osac", &tls.Config{RootCAs: roots})
+		_, err := tokenSource.Token()
+
+		Expect(err).To(HaveOccurred())
+		select {
+		case <-redirected:
+			Fail("token client followed a redirect to another endpoint")
+		default:
+		}
 	})
 })
 

@@ -73,7 +73,17 @@ func (c NetBoxSecretAPIConfig) validate() error {
 	if c.URL == "" || c.IssuerURL == "" || c.ClientIDFile == "" || c.ClientSecretFile == "" {
 		return errors.New("secret API endpoint, issuer, and client credential files are required")
 	}
-	return nil
+	_, err := parseSecureNetBoxSecretAPIIssuer(c.IssuerURL)
+	return err
+}
+
+func parseSecureNetBoxSecretAPIIssuer(raw string) (*url.URL, error) {
+	issuer, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || issuer.Scheme != "https" || issuer.Host == "" || issuer.User != nil ||
+		issuer.RawQuery != "" || issuer.Fragment != "" {
+		return nil, errors.New("issuer must be a secure HTTPS URL without user info, query, or fragment")
+	}
+	return issuer, nil
 }
 
 // NetBoxSecretAPIClient is the authenticated private Secrets gRPC client used by NetBox.
@@ -135,7 +145,7 @@ func netBoxSecretAPITokenSource(clientID, clientSecret, issuerURL string, tlsCon
 	tokenContext := context.WithValue(context.Background(), oauth2.HTTPClient, newNetBoxSecretAPIHTTPClient(tlsConfig))
 	credentials := &clientcredentials.Config{
 		ClientID: clientID, ClientSecret: clientSecret,
-		TokenURL:  strings.TrimRight(issuerURL, "/") + "/protocol/openid-connect/token",
+		TokenURL:  strings.TrimRight(strings.TrimSpace(issuerURL), "/") + "/protocol/openid-connect/token",
 		AuthStyle: oauth2.AuthStyleInHeader,
 	}
 	return credentials.TokenSource(tokenContext)
@@ -145,6 +155,9 @@ func newNetBoxSecretAPIHTTPClient(tlsConfig *tls.Config) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: tlsConfig.Clone()},
 		Timeout:   secretAPIHTTPTimeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 }
 
