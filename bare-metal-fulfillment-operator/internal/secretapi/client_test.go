@@ -237,7 +237,9 @@ var _ = Describe("Secret API client", func() {
 			Entry("requires a host", "https:///realms/osac", "Secret API issuer URL must use HTTPS"),
 			Entry("rejects user info", "https://user:password@keycloak.example.test/realms/osac", "Secret API issuer URL must use HTTPS"),
 			Entry("rejects query parameters", "https://keycloak.example.test/realms/osac?tenant=shared", "Secret API issuer URL must use HTTPS"),
+			Entry("rejects an empty query", "https://keycloak.example.test/realms/osac?", "Secret API issuer URL must use HTTPS"),
 			Entry("rejects fragments", "https://keycloak.example.test/realms/osac#token", "Secret API issuer URL must use HTTPS"),
+			Entry("rejects an empty fragment", "https://keycloak.example.test/realms/osac#", "Secret API issuer URL must use HTTPS"),
 			Entry("rejects malformed URLs", "https://%zz/realms/osac", "Secret API issuer URL must use HTTPS"),
 		)
 
