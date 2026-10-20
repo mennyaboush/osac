@@ -102,6 +102,7 @@ var _ = Describe("NetBox inventory client", func() {
 			Expect(client.bmhManager).To(BeIdenticalTo(manager))
 			Expect(client.bmhManager.Namespace()).To(Equal("metal3-system"))
 			Expect(client.hostClass).To(Equal(testNetBoxHostClass))
+			Expect(client.credentialResolver).NotTo(BeNil())
 		})
 	})
 
@@ -158,6 +159,7 @@ type selectorQueryTestAPI struct {
 	deviceSnapshots  []netboxclient.DeviceSnapshot
 	deviceReadCalls  int
 	deviceReadIDs    []string
+	deviceGetError   error
 	patchCalls       int
 	patchDeviceID    string
 	patch            netboxclient.DevicePatch
@@ -200,6 +202,9 @@ func (a *selectorQueryTestAPI) ForEachDeviceCustomField(
 func (a *selectorQueryTestAPI) GetDevice(_ context.Context, id string) (netboxclient.DeviceSnapshot, error) {
 	a.deviceReadCalls++
 	a.deviceReadIDs = append(a.deviceReadIDs, id)
+	if a.deviceGetError != nil {
+		return netboxclient.DeviceSnapshot{}, a.deviceGetError
+	}
 	if index := a.deviceReadCalls - 1; index < len(a.deviceSnapshots) {
 		return a.deviceSnapshots[index], nil
 	}
@@ -217,6 +222,29 @@ func (a *selectorQueryTestAPI) PatchDevice(
 	a.patch = patch
 	a.patchETag = etag
 	return a.patchSnapshot, a.patchErr
+}
+
+type fakeDeviceCredentialResolver struct {
+	credentials *NetBoxCredentials
+	err         error
+	calls       int
+	device      netboxclient.Device
+	onResolve   func()
+}
+
+func (r *fakeDeviceCredentialResolver) Resolve(_ context.Context, device netboxclient.Device) (*NetBoxCredentials, error) {
+	r.calls++
+	r.device = device
+	if r.onResolve != nil {
+		r.onResolve()
+	}
+	return r.credentials, r.err
+}
+
+func newTestNetBoxClient(api NetBoxAPI, resolver DeviceCredentialResolver) *NetBoxClient {
+	client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
+	client.credentialResolver = resolver
+	return client
 }
 
 var _ = Describe("NetBox selector query", func() {
@@ -353,7 +381,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		claimedDevice := testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123")
 		claimedDevice.Device.CustomFields["osac_managed"] = false
 		api := &selectorQueryTestAPI{deviceSnapshot: freeDevice, patchSnapshot: claimedDevice}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := newTestNetBoxClient(api, &fakeDeviceCredentialResolver{})
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -520,4 +548,186 @@ func expectedTestNetBoxAssignedHost(instanceID string) *Host {
 
 func testNetBoxSelectorBMHManager() *baremetalhost.Manager {
 	return baremetalhost.NewManager(nil, nil, "metal3-system")
+}
+
+var _ = Describe("NetBox assignment credential checks", func() {
+	It("resolves credentials before conditionally claiming a staged device", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
+			patchSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{
+				ID:     "46",
+				Status: netBoxStatusActive,
+				CustomFields: map[string]interface{}{
+					"osac_managed":     true,
+					"osac_instance_id": "bmi-123",
+				},
+			}},
+		}
+		resolver := &fakeDeviceCredentialResolver{
+			credentials: &NetBoxCredentials{Username: []byte("bmc-user"), Password: []byte("source-password")},
+		}
+		resolver.onResolve = func() { Expect(api.patchCalls).To(BeZero()) }
+		client := newTestNetBoxClient(api, resolver)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(host).NotTo(BeNil())
+		Expect(host.BareMetalInstanceID).To(Equal("bmi-123"))
+		Expect(resolver.calls).To(Equal(1))
+		Expect(resolver.device.ID).To(Equal("46"))
+		Expect(api.deviceReadCalls).To(Equal(1))
+		Expect(api.patchCalls).To(Equal(1))
+		Expect(api.patchDeviceID).To(Equal("46"))
+		Expect(api.patchETag).To(Equal(`W/"device-revision-1"`))
+		Expect(api.patch.Status).NotTo(BeNil())
+		Expect(*api.patch.Status).To(Equal(netBoxStatusActive))
+		Expect(api.patch.CustomFields).To(Equal(map[string]interface{}{"osac_instance_id": "bmi-123"}))
+		Expect(api.patch.CustomFields).NotTo(HaveKey("username"))
+		Expect(api.patch.CustomFields).NotTo(HaveKey("password"))
+	})
+
+	It("marks the device failed and returns no host for invalid credentials", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
+			patchSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{
+				ID:     "46",
+				Status: "failed",
+			}},
+		}
+		resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("no system-scoped OSAC Secret is associated"))}
+		client := newTestNetBoxClient(api, resolver)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(resolver.calls).To(Equal(1))
+		Expect(api.patchCalls).To(Equal(1))
+		Expect(api.patchDeviceID).To(Equal("46"))
+		Expect(api.patchETag).To(Equal(`W/"device-revision-1"`))
+		Expect(api.patch.Status).NotTo(BeNil())
+		Expect(*api.patch.Status).To(Equal("failed"))
+		Expect(api.patch.CustomFields).To(BeEmpty())
+	})
+
+	It("returns retryable resolver errors without changing device status", func() {
+		api := &selectorQueryTestAPI{deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`)}
+		resolver := &fakeDeviceCredentialResolver{err: errors.New("Secret API unavailable")}
+		client := newTestNetBoxClient(api, resolver)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("failed to resolve NetBox BMC credentials")))
+		Expect(err.Error()).NotTo(ContainSubstring("source-password"))
+		Expect(resolver.calls).To(Equal(1))
+		Expect(api.patchCalls).To(BeZero())
+	})
+
+	It("returns an error when the failed status update cannot be confirmed", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
+			patchErr:       errors.New("NetBox is unavailable"),
+		}
+		resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("invalid credentials"))}
+		client := newTestNetBoxClient(api, resolver)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("failed to mark NetBox device failed")))
+		Expect(api.patchCalls).To(Equal(1))
+	})
+
+	It("does not return no host when NetBox does not confirm the failed status", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
+			patchSnapshot:  stagedManagedDeviceSnapshot(`W/"device-revision-2"`),
+		}
+		resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("invalid credentials"))}
+		client := newTestNetBoxClient(api, resolver)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("did not confirm the device failed")))
+		Expect(api.patchCalls).To(Equal(1))
+	})
+
+	It("resolves credentials before returning an existing same-owner assignment", func() {
+		api := &selectorQueryTestAPI{deviceSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{
+			ID:     "46",
+			Status: netBoxStatusActive,
+			CustomFields: map[string]interface{}{
+				"osac_managed":     true,
+				"osac_instance_id": "bmi-123",
+			},
+		}}}
+		resolver := &fakeDeviceCredentialResolver{credentials: &NetBoxCredentials{Username: []byte("user"), Password: []byte("pass")}}
+		client := newTestNetBoxClient(api, resolver)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(host).NotTo(BeNil())
+		Expect(host.BareMetalInstanceID).To(Equal("bmi-123"))
+		Expect(resolver.calls).To(Equal(1))
+		Expect(api.patchCalls).To(BeZero())
+	})
+
+	It("does not resolve credentials for a device assigned to another instance", func() {
+		api := &selectorQueryTestAPI{deviceSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{
+			ID:     "46",
+			Status: netBoxStatusActive,
+			CustomFields: map[string]interface{}{
+				"osac_managed":     true,
+				"osac_instance_id": "bmi-other",
+			},
+		}}}
+		resolver := &fakeDeviceCredentialResolver{}
+		client := newTestNetBoxClient(api, resolver)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(host).To(BeNil())
+		Expect(resolver.calls).To(BeZero())
+		Expect(api.patchCalls).To(BeZero())
+	})
+
+	It("requires an ETag before resolving credentials for a new claim", func() {
+		api := &selectorQueryTestAPI{deviceSnapshot: stagedManagedDeviceSnapshot("")}
+		resolver := &fakeDeviceCredentialResolver{}
+		client := newTestNetBoxClient(api, resolver)
+
+		_, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(err).To(MatchError(ContainSubstring("missing an ETag")))
+		Expect(resolver.calls).To(BeZero())
+		Expect(api.patchCalls).To(BeZero())
+	})
+
+	It("fails closed when no credential resolver is configured", func() {
+		api := &selectorQueryTestAPI{deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`)}
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
+
+		_, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(err).To(MatchError(ContainSubstring("credential resolver is not configured")))
+		Expect(api.patchCalls).To(BeZero())
+	})
+})
+
+func stagedManagedDeviceSnapshot(etag string) netboxclient.DeviceSnapshot {
+	return netboxclient.DeviceSnapshot{
+		Device: netboxclient.Device{
+			ID:     "46",
+			Status: netBoxStatusStaged,
+			CustomFields: map[string]interface{}{
+				"osac_managed": true,
+			},
+		},
+		ETag: etag,
+	}
 }
