@@ -678,7 +678,7 @@ var _ = Describe("NetBox client", func() {
 	})
 
 	It("keeps TLS certificate verification enabled", func() {
-		config, err := NewTLSConfig("")
+		config, err := newTLSConfig("")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(config.InsecureSkipVerify).To(BeFalse())
 		Expect(config.MinVersion).To(BeNumerically(">=", tls.VersionTLS12))
