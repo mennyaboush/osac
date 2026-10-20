@@ -143,10 +143,10 @@ func NewNetBoxAPI(config *Config) (NetBoxAPI, error) {
 // NewNetBoxClient creates a NetBox inventory client with injected dependencies.
 func NewNetBoxClient(api NetBoxAPI, bmhManager baremetalhost.BMHLifecycleManager, hostClass string, secretAPI SecretAPIClient) *NetBoxClient {
 	return &NetBoxClient{
-		api:        api,
-		bmhManager: bmhManager,
-		hostClass:  hostClass,
-		secretAPI:  secretAPI,
+		api:                api,
+		bmhManager:         bmhManager,
+		hostClass:          hostClass,
+		secretAPI:          secretAPI,
 		credentialResolver: NewNetBoxCredentialResolver(secretAPI),
 	}
 }
@@ -223,9 +223,6 @@ func buildFreeHostQuery(selector map[string]string) netboxclient.DeviceQuery {
 func (c *NetBoxClient) AssignHost(ctx context.Context, inventoryHostID string, bareMetalInstanceID string, _ map[string]string) (*Host, error) {
 	if c == nil || c.api == nil {
 		return nil, errNetBoxClientNotImplemented
-	}
-	if c.credentialResolver == nil {
-		return nil, errors.New("NetBox credential resolver is not configured")
 	}
 	if bareMetalInstanceID == "" {
 		return nil, errors.New("invalid input: bareMetalInstanceID is empty")
@@ -572,15 +569,4 @@ func bmcCredentials(secret secretapi.Secret) ([]byte, []byte, error) {
 		return nil, nil, errors.New("OSAC Secret must contain non-empty username and password values")
 	}
 	return append([]byte(nil), username...), append([]byte(nil), password...), nil
-}
-
-func (r *NetBoxCredentialResolver) Close() error {
-	if r == nil {
-		return nil
-	}
-	closer, ok := r.secrets.(interface{ Close() error })
-	if !ok {
-		return nil
-	}
-	return closer.Close()
 }

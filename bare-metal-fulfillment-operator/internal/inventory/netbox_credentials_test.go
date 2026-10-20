@@ -144,7 +144,7 @@ var _ = Describe("NetBox credential resolver", func() {
 			Expect(err.Error()).NotTo(ContainSubstring("source-password"))
 		},
 		Entry("missing username", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"password": []byte("source-password")}}, "non-empty username and password"),
-		Entry("empty password", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": []byte{}}}, "non-empty username and password"),
+		Entry("empty password", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": {}}}, "non-empty username and password"),
 		Entry("changed tenant", secretapi.Secret{ID: "secret-1", Tenant: "tenant-a", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": []byte("source-password")}}, "not a system-scoped Secret associated"),
 		Entry("changed label", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"other": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": []byte("source-password")}}, "not a system-scoped Secret associated"),
 	)
