@@ -216,7 +216,7 @@ var _ = Describe("Secret API client", func() {
 				_, err := New(Config{Endpoint: endpoint})
 				Expect(err).To(MatchError(wantErr))
 			},
-			Entry("requires an endpoint", "", "Secret API endpoint is required"),
+			Entry("requires an endpoint", "", "Secret API endpoint must use HTTPS and include a host"),
 			Entry("requires HTTPS", "http://secrets.example.test:8001", "Secret API endpoint must use HTTPS and include a host"),
 			Entry("rejects endpoint paths", "https://secrets.example.test:8001/api", "Secret API endpoint must use HTTPS and include a host"),
 			Entry("rejects malformed URLs", "https://%zz", "Secret API endpoint must use HTTPS and include a host"),
@@ -232,7 +232,7 @@ var _ = Describe("Secret API client", func() {
 				})
 				Expect(err).To(MatchError(wantErr))
 			},
-			Entry("requires an issuer", "", "Secret API issuer URL is required"),
+			Entry("requires an issuer", "", "Secret API issuer URL must use HTTPS"),
 			Entry("requires HTTPS", "http://keycloak.example.test/realms/osac", "Secret API issuer URL must use HTTPS"),
 			Entry("requires a host", "https:///realms/osac", "Secret API issuer URL must use HTTPS"),
 			Entry("rejects user info", "https://user:password@keycloak.example.test/realms/osac", "Secret API issuer URL must use HTTPS"),
@@ -245,7 +245,7 @@ var _ = Describe("Secret API client", func() {
 
 		It("rejects missing or insecure connection configuration", func() {
 			_, err := New(Config{})
-			Expect(err).To(MatchError(ContainSubstring("endpoint is required")))
+			Expect(err).To(MatchError(ContainSubstring("endpoint must use HTTPS")))
 
 			_, err = New(Config{
 				Endpoint:         "http://secrets.example.test:8001",

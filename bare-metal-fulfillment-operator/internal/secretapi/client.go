@@ -118,9 +118,6 @@ func New(config Config) (*Client, error) {
 }
 
 func parseEndpoint(endpoint string) (string, error) {
-	if strings.TrimSpace(endpoint) == "" {
-		return "", errors.New("Secret API endpoint is required")
-	}
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", errors.New("Secret API endpoint must use HTTPS and include a host")
@@ -129,9 +126,6 @@ func parseEndpoint(endpoint string) (string, error) {
 }
 
 func validateIssuerURL(issuerURL string) (string, error) {
-	if strings.TrimSpace(issuerURL) == "" {
-		return "", errors.New("Secret API issuer URL is required")
-	}
 	parsed, err := url.Parse(issuerURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || strings.ContainsAny(issuerURL, "?#") {
 		return "", errors.New("Secret API issuer URL must use HTTPS")
@@ -140,9 +134,6 @@ func validateIssuerURL(issuerURL string) (string, error) {
 }
 
 func readCredentialFile(path, name string) (string, error) {
-	if strings.TrimSpace(path) == "" {
-		return "", fmt.Errorf("Secret API %s file is required", name)
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("failed to read Secret API %s file: %w", name, err)
