@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bmcdiscovery"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/netboxclient"
@@ -34,9 +36,11 @@ import (
 )
 
 const (
-	netBoxHostPrefix   = "netbox-"
-	netBoxStatusActive = "active"
-	netBoxStatusStaged = "staged"
+	netBoxHostPrefix               = "netbox-"
+	netBoxStatusActive             = "active"
+	netBoxStatusFailed             = "failed"
+	netBoxStatusStaged             = "staged"
+	netBoxCredentialFailureMessage = "OSAC: BMC credentials are missing or invalid. Check the system Secret and device BMC settings; reset status to staged after repair."
 )
 
 type netBoxAssignmentState uint8
@@ -276,6 +280,10 @@ func (c *NetBoxClient) assignNetBoxDevice(ctx context.Context, namespace, device
 	case netBoxAssignmentReadyToClaim:
 		// OSAC-5952 will use the resolved credentials when preparing the Metal3 host.
 		if _, err := c.credentialResolver.Resolve(ctx, snapshot.Device); err != nil {
+			if errors.Is(err, ErrCredentialResolutionFailed) {
+				ctrllog.FromContext(ctx).Error(err, "NetBox device credentials are invalid; quarantining device", "deviceID", deviceID)
+				return c.markNetBoxDeviceFailed(ctx, deviceID, snapshot.ETag, credentialFailureMessage(err))
+			}
 			return nil, fmt.Errorf("failed to resolve NetBox BMC credentials: %w", err)
 		}
 		return c.claimNetBoxDevice(ctx, namespace, deviceID, bareMetalInstanceID, snapshot.ETag)
@@ -286,6 +294,54 @@ func (c *NetBoxClient) assignNetBoxDevice(ctx context.Context, namespace, device
 	default:
 		return nil, fmt.Errorf("unknown NetBox assignment state: %d", state)
 	}
+}
+
+func credentialFailureMessage(err error) string {
+	switch {
+	case errors.Is(err, errMissingNetBoxSecret):
+		return "OSAC: no BMC Secret matches this device. Add the system Secret label, then reset status to staged."
+	case errors.Is(err, errAmbiguousNetBoxSecret):
+		return "OSAC: multiple BMC Secrets match this device. Fix the labels, then reset status to staged."
+	default:
+		return netBoxCredentialFailureMessage
+	}
+}
+
+func (c *NetBoxClient) markNetBoxDeviceFailed(ctx context.Context, deviceID, etag, message string) (*Host, error) {
+	failed := netBoxStatusFailed
+	updated, err := c.api.PatchDevice(ctx, deviceID, netboxclient.DevicePatch{
+		Status: &failed, ChangelogMessage: message,
+	}, etag)
+	if err != nil {
+		latest, readErr := c.readNetBoxDevice(ctx, deviceID)
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to confirm NetBox credential quarantine: %w", readErr)
+		}
+		return netBoxQuarantineOutcome(deviceID, latest.Device, true)
+	}
+	return netBoxQuarantineOutcome(deviceID, updated.Device, false)
+}
+
+func netBoxQuarantineOutcome(deviceID string, device netboxclient.Device, afterPatchError bool) (*Host, error) {
+	if device.ID != deviceID {
+		return nil, errors.New("NetBox returned a different device after credential quarantine")
+	}
+	owner, err := netBoxInstanceOwner(device)
+	if err != nil {
+		return nil, err
+	}
+	if device.Status == netBoxStatusFailed && owner == "" {
+		return nil, nil
+	}
+	if afterPatchError {
+		if device.Status == netBoxStatusActive && owner != "" {
+			return nil, nil
+		}
+		if device.Status == netBoxStatusStaged && owner == "" {
+			return nil, errors.New("NetBox credential quarantine was not confirmed; retry with a fresh ETag")
+		}
+	}
+	return nil, errors.New("NetBox response did not confirm credential quarantine")
 }
 
 func (c *NetBoxClient) claimNetBoxDevice(ctx context.Context, namespace, deviceID, bareMetalInstanceID, etag string) (*Host, error) {
@@ -442,7 +498,7 @@ func (r *NetBoxCredentialResolver) Resolve(ctx context.Context, device netboxcli
 	}
 	labelKey, err := netBoxDeviceSecretLabel(device.ID)
 	if err != nil {
-		return nil, credentialResolutionFailure(err)
+		return nil, err
 	}
 	connection, err := netBoxConnection(device.CustomFields)
 	if err != nil {
@@ -504,28 +560,36 @@ func (r *NetBoxCredentialResolver) getDeviceSecret(ctx context.Context, labelKey
 	}
 	secretID, err := uniqueDeviceSecretID(result, labelKey)
 	if err != nil {
-		return secretapi.Secret{}, credentialResolutionFailure(err)
+		if errors.Is(err, errMissingNetBoxSecret) || errors.Is(err, errAmbiguousNetBoxSecret) {
+			return secretapi.Secret{}, credentialResolutionFailure(err)
+		}
+		return secretapi.Secret{}, err
 	}
 	secret, err := r.secrets.Get(ctx, secretID)
 	if err != nil {
 		return secretapi.Secret{}, fmt.Errorf("failed to get OSAC Secret for NetBox device: %w", err)
 	}
 	if secret.ID != secretID || !isDeviceSecret(secret, labelKey) {
-		return secretapi.Secret{}, credentialResolutionFailure(errors.New("OSAC Secret is not a system-scoped Secret associated with the NetBox device"))
+		return secretapi.Secret{}, errors.New("OSAC Secret is not a system-scoped Secret associated with the NetBox device")
 	}
 	return secret, nil
 }
 
 func credentialResolutionFailure(err error) error {
-	return fmt.Errorf("%w: %s", ErrCredentialResolutionFailed, err)
+	return fmt.Errorf("%w: %w", ErrCredentialResolutionFailed, err)
 }
+
+var (
+	errMissingNetBoxSecret   = errors.New("no system-scoped OSAC Secret is associated with the NetBox device")
+	errAmbiguousNetBoxSecret = errors.New("multiple system-scoped OSAC Secrets are associated with the NetBox device")
+)
 
 func uniqueDeviceSecretID(result secretapi.ListResult, labelKey string) (string, error) {
 	if result.Total == 0 && len(result.Items) == 0 {
-		return "", errors.New("no system-scoped OSAC Secret is associated with the NetBox device")
+		return "", errMissingNetBoxSecret
 	}
 	if result.Total > 1 {
-		return "", errors.New("multiple system-scoped OSAC Secrets are associated with the NetBox device")
+		return "", errAmbiguousNetBoxSecret
 	}
 	if result.Total != 1 || len(result.Items) != 1 {
 		return "", errors.New("inconsistent OSAC Secret list response for NetBox device")

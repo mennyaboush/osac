@@ -95,41 +95,41 @@ var _ = Describe("NetBox credential resolver", func() {
 	})
 
 	DescribeTable("rejects invalid device identity or BMC fields before contacting the Secret API",
-		func(device netboxclient.Device, wantErr string) {
+		func(device netboxclient.Device, wantErr string, deterministic bool) {
 			reader := &fakeSecretReader{}
 			resolver := NewNetBoxCredentialResolver(reader)
 
 			_, err := resolver.Resolve(context.Background(), device)
 
 			Expect(err).To(MatchError(ContainSubstring(wantErr)))
-			Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeTrue())
+			Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(Equal(deterministic))
 			Expect(reader.listCalls).To(BeZero())
 			Expect(reader.getCalls).To(BeZero())
 		},
-		Entry("non-numeric device ID", netboxclient.Device{ID: "42||true"}, "invalid NetBox device ID"),
-		Entry("missing BMC address", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_boot_mac": "aa:bb:cc:dd:ee:42"}}, "invalid BMC address"),
-		Entry("unsupported BMC address scheme", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_bmc_address": "http://192.0.2.42", "osac_boot_mac": "aa:bb:cc:dd:ee:42"}}, "invalid BMC address"),
-		Entry("invalid boot MAC", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_bmc_address": "ipmi://192.0.2.42", "osac_boot_mac": "not-a-mac"}}, "invalid boot MAC"),
+		Entry("non-numeric device ID", netboxclient.Device{ID: "42||true"}, "invalid NetBox device ID", false),
+		Entry("missing BMC address", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_boot_mac": "aa:bb:cc:dd:ee:42"}}, "invalid BMC address", true),
+		Entry("unsupported BMC address scheme", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_bmc_address": "http://192.0.2.42", "osac_boot_mac": "aa:bb:cc:dd:ee:42"}}, "invalid BMC address", true),
+		Entry("invalid boot MAC", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_bmc_address": "ipmi://192.0.2.42", "osac_boot_mac": "not-a-mac"}}, "invalid boot MAC", true),
 	)
 
 	DescribeTable("rejects missing or ambiguous Secret matches",
-		func(result secretapi.ListResult, wantErr string) {
+		func(result secretapi.ListResult, wantErr string, deterministic bool) {
 			reader := &fakeSecretReader{listResult: result}
 			resolver := NewNetBoxCredentialResolver(reader)
 
 			_, err := resolver.Resolve(context.Background(), validCredentialTestDevice())
 
 			Expect(err).To(MatchError(ContainSubstring(wantErr)))
-			Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeTrue())
+			Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(Equal(deterministic))
 			Expect(reader.getCalls).To(BeZero())
 		},
-		Entry("missing", secretapi.ListResult{}, "no system-scoped OSAC Secret is associated"),
-		Entry("ambiguous", secretapi.ListResult{Total: 2, Items: []secretapi.Secret{{ID: "one"}, {ID: "two"}}}, "multiple system-scoped OSAC Secrets are associated"),
-		Entry("inconsistent total", secretapi.ListResult{Total: 1}, "inconsistent OSAC Secret list response"),
+		Entry("missing", secretapi.ListResult{}, "no system-scoped OSAC Secret is associated", true),
+		Entry("ambiguous", secretapi.ListResult{Total: 2, Items: []secretapi.Secret{{ID: "one"}, {ID: "two"}}}, "multiple system-scoped OSAC Secrets are associated", true),
+		Entry("inconsistent total", secretapi.ListResult{Total: 1}, "inconsistent OSAC Secret list response", false),
 	)
 
 	DescribeTable("rejects missing, malformed, or changed credentials without exposing values",
-		func(secret secretapi.Secret, wantErr string) {
+		func(secret secretapi.Secret, wantErr string, deterministic bool) {
 			reader := &fakeSecretReader{
 				listResult: secretapi.ListResult{Total: 1, Items: []secretapi.Secret{{ID: "secret-1", Tenant: "system", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}}}},
 				getSecret:  secret,
@@ -139,14 +139,14 @@ var _ = Describe("NetBox credential resolver", func() {
 			_, err := resolver.Resolve(context.Background(), validCredentialTestDevice())
 
 			Expect(err).To(MatchError(ContainSubstring(wantErr)))
-			Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeTrue())
+			Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(Equal(deterministic))
 			Expect(err.Error()).NotTo(ContainSubstring("source-user"))
 			Expect(err.Error()).NotTo(ContainSubstring("source-password"))
 		},
-		Entry("missing username", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"password": []byte("source-password")}}, "non-empty username and password"),
-		Entry("empty password", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": {}}}, "non-empty username and password"),
-		Entry("changed tenant", secretapi.Secret{ID: "secret-1", Tenant: "tenant-a", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": []byte("source-password")}}, "not a system-scoped Secret associated"),
-		Entry("changed label", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"other": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": []byte("source-password")}}, "not a system-scoped Secret associated"),
+		Entry("missing username", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"password": []byte("source-password")}}, "non-empty username and password", true),
+		Entry("empty password", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": {}}}, "non-empty username and password", true),
+		Entry("changed tenant", secretapi.Secret{ID: "secret-1", Tenant: "tenant-a", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": []byte("source-password")}}, "not a system-scoped Secret associated", false),
+		Entry("changed label", secretapi.Secret{ID: "secret-1", Tenant: "system", Labels: map[string]string{"other": "true"}, Data: map[string][]byte{"username": []byte("source-user"), "password": []byte("source-password")}}, "not a system-scoped Secret associated", false),
 	)
 
 	It("returns retryable API errors without credentials in the error", func() {
@@ -159,6 +159,21 @@ var _ = Describe("NetBox credential resolver", func() {
 		Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeFalse())
 		Expect(err.Error()).NotTo(ContainSubstring("source-password"))
 		Expect(reader.getCalls).To(BeZero())
+	})
+
+	It("leaves a failed Secret Get retryable", func() {
+		reader := &fakeSecretReader{
+			listResult: secretapi.ListResult{Total: 1, Items: []secretapi.Secret{{
+				ID: "secret-1", Tenant: "system", Labels: map[string]string{"osac.openshift.io/netbox-device-42": "true"},
+			}}},
+			getError: errors.New("permission denied"),
+		}
+
+		_, err := NewNetBoxCredentialResolver(reader).Resolve(context.Background(), validCredentialTestDevice())
+
+		Expect(err).To(MatchError(ContainSubstring("failed to get OSAC Secret")))
+		Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeFalse())
+		Expect(reader.getCalls).To(Equal(1))
 	})
 })
 

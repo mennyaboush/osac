@@ -593,18 +593,34 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(api.patch.CustomFields).NotTo(HaveKey("password"))
 	})
 
-	It("returns deterministic credential errors without changing NetBox", func() {
-		api := &selectorQueryTestAPI{deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`)}
-		resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("no system-scoped OSAC Secret is associated"))}
-		client := newTestNetBoxClient(api, resolver)
+	DescribeTable("quarantines deterministic credential errors with a fixed repair message",
+		func(cause error, wantMessage string) {
+			api := &selectorQueryTestAPI{
+				deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
+				patchSnapshot:  testNetBoxAssignmentSnapshot("failed", ""),
+			}
+			resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(cause)}
+			client := newTestNetBoxClient(api, resolver)
 
-		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
-		Expect(host).To(BeNil())
-		Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeTrue())
-		Expect(resolver.calls).To(Equal(1))
-		Expect(api.patchCalls).To(BeZero())
-	})
+			Expect(host).To(BeNil())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resolver.calls).To(Equal(1))
+			Expect(api.patchCalls).To(Equal(1))
+			Expect(api.patchDeviceID).To(Equal("46"))
+			Expect(api.patchETag).To(Equal(`W/"device-revision-1"`))
+			Expect(api.patch.Status).NotTo(BeNil())
+			Expect(*api.patch.Status).To(Equal("failed"))
+			Expect(api.patch.CustomFields).To(BeEmpty())
+			Expect(api.patch.ChangelogMessage).To(ContainSubstring(wantMessage))
+			Expect(api.patch.ChangelogMessage).To(ContainSubstring("staged"))
+			Expect(api.patch.ChangelogMessage).NotTo(ContainSubstring("source-password"))
+		},
+		Entry("missing Secret", errMissingNetBoxSecret, "no BMC Secret"),
+		Entry("ambiguous Secret", errAmbiguousNetBoxSecret, "multiple BMC Secrets"),
+		Entry("invalid Secret data", errors.New("source-password"), "BMC credentials"),
+	)
 
 	It("returns retryable resolver errors without changing device status", func() {
 		api := &selectorQueryTestAPI{deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`)}
@@ -618,6 +634,79 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(err.Error()).NotTo(ContainSubstring("source-password"))
 		Expect(resolver.calls).To(Equal(1))
 		Expect(api.patchCalls).To(BeZero())
+	})
+
+	DescribeTable("reconciles an uncertain quarantine write",
+		func(patchErr error, latest netboxclient.DeviceSnapshot, wantErr string) {
+			api := &selectorQueryTestAPI{
+				deviceSnapshots: []netboxclient.DeviceSnapshot{
+					stagedManagedDeviceSnapshot(`W/"device-revision-1"`), latest,
+				},
+				patchErr: patchErr,
+			}
+			resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("invalid credentials"))}
+			client := newTestNetBoxClient(api, resolver)
+
+			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+			Expect(host).To(BeNil())
+			if wantErr == "" {
+				Expect(err).NotTo(HaveOccurred())
+			} else {
+				Expect(err).To(MatchError(ContainSubstring(wantErr)))
+			}
+			Expect(api.patchCalls).To(Equal(1))
+			Expect(api.deviceReadIDs).To(Equal([]string{"46", "46"}))
+		},
+		Entry("412 and already failed", &netboxclient.APIError{Kind: netboxclient.ErrorKindConflict}, testNetBoxAssignmentSnapshot("failed", ""), ""),
+		Entry("lost response and already failed", &netboxclient.APIError{Kind: netboxclient.ErrorKindTransport}, testNetBoxAssignmentSnapshot("failed", ""), ""),
+		Entry("412 and claimed elsewhere", &netboxclient.APIError{Kind: netboxclient.ErrorKindConflict}, testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-other"), ""),
+		Entry("412 and still staged", &netboxclient.APIError{Kind: netboxclient.ErrorKindConflict}, testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""), "retry"),
+		Entry("reread identifies another device", &netboxclient.APIError{Kind: netboxclient.ErrorKindTransport}, netboxclient.DeviceSnapshot{Device: netboxclient.Device{ID: "47"}}, "different device"),
+	)
+
+	It("returns an error when the quarantine response does not confirm failure", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
+			patchSnapshot:  testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""),
+		}
+		client := newTestNetBoxClient(api, &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("invalid credentials"))})
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("did not confirm")))
+		Expect(api.patchCalls).To(Equal(1))
+	})
+
+	It("does not release the saved host ID when the response identifies a different device", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
+			patchSnapshot:  netboxclient.DeviceSnapshot{Device: netboxclient.Device{ID: "47", Status: "failed"}},
+		}
+		client := newTestNetBoxClient(api, &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errMissingNetBoxSecret)})
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("different device")))
+		Expect(api.patchCalls).To(Equal(1))
+	})
+
+	It("does not release the saved host ID when the failed device has a malformed owner", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
+			patchSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{
+				ID: "46", Status: "failed", CustomFields: map[string]interface{}{"osac_instance_id": 123},
+			}},
+		}
+		client := newTestNetBoxClient(api, &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errMissingNetBoxSecret)})
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("malformed osac_instance_id")))
+		Expect(api.patchCalls).To(Equal(1))
 	})
 
 	It("returns an existing same-owner assignment without resolving credentials again", func() {
