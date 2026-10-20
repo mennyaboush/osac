@@ -472,14 +472,6 @@ func setupBareMetalInstanceController(
 	if err != nil {
 		return err
 	}
-	if closer, ok := inventoryClient.(interface{ Close() error }); ok {
-		context.AfterFunc(ctx, func() {
-			if closeErr := closer.Close(); closeErr != nil {
-				setupLog.Error(closeErr, "Failed to close inventory client")
-			}
-		})
-	}
-
 	managementClient, err := management.NewClient(ctx, &managementConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create management client: %w", err)
@@ -544,7 +536,7 @@ func createInventoryClient(
 	case "bcm":
 		return createBCMInventoryClient(ctx, inventoryCfg, managementCfg, mgr)
 	case "netbox":
-		return createNetBoxInventoryClient(inventoryCfg, managementCfg, mgr)
+		return createNetBoxInventoryClient(ctx, inventoryCfg, managementCfg, mgr)
 	}
 
 	inventoryClient, err := inventory.NewClient(ctx, inventoryCfg)
@@ -567,6 +559,7 @@ func validateNetBoxManagementConfig(managementCfg *management.Config) error {
 }
 
 func createNetBoxInventoryClient(
+	ctx context.Context,
 	inventoryCfg *inventory.Config,
 	managementCfg *management.Config,
 	mgr ctrl.Manager,
@@ -578,7 +571,7 @@ func createNetBoxInventoryClient(
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure Metal3 BMH manager for NetBox: %w", err)
 	}
-	return createNetBoxInventoryClientWithManager(inventoryCfg, bmhManager)
+	return createNetBoxInventoryClientWithManager(ctx, inventoryCfg, bmhManager)
 }
 
 func validateNetBoxInventoryConfig(inventoryCfg *inventory.Config, managementCfg *management.Config) error {
@@ -593,6 +586,7 @@ func validateNetBoxInventoryConfig(inventoryCfg *inventory.Config, managementCfg
 }
 
 func createNetBoxInventoryClientWithManager(
+	ctx context.Context,
 	inventoryCfg *inventory.Config,
 	bmhManager *baremetalhost.Manager,
 ) (inventory.Client, error) {
@@ -606,7 +600,13 @@ func createNetBoxInventoryClientWithManager(
 	}
 	setupLog.Info("BMH manager configured", "namespace", bmhManager.Namespace())
 
-	return inventory.NewNetBoxClient(netBoxAPI, bmhManager, inventoryCfg.HostClass, secretsClient), nil
+	netBoxClient := inventory.NewNetBoxClient(netBoxAPI, bmhManager, inventoryCfg.HostClass, secretsClient)
+	context.AfterFunc(ctx, func() {
+		if closeErr := netBoxClient.Close(); closeErr != nil {
+			setupLog.Error(closeErr, "Failed to close NetBox inventory client")
+		}
+	})
+	return netBoxClient, nil
 }
 
 func createSecretAPIClientFromEnv() (*secretapi.Client, error) {
