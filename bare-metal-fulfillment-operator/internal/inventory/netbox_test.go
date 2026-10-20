@@ -19,6 +19,8 @@ package inventory
 import (
 	"context"
 	"errors"
+	"maps"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,7 +155,15 @@ type selectorQueryTestAPI struct {
 	deviceVisits     int
 	customFieldReads int
 	deviceSnapshot   netboxclient.DeviceSnapshot
+	deviceSnapshots  []netboxclient.DeviceSnapshot
+	deviceReadCalls  int
+	deviceReadIDs    []string
 	patchCalls       int
+	patchDeviceID    string
+	patch            netboxclient.DevicePatch
+	patchETag        string
+	patchSnapshot    netboxclient.DeviceSnapshot
+	patchErr         error
 }
 
 func (a *selectorQueryTestAPI) ForEachDevice(
@@ -162,10 +172,7 @@ func (a *selectorQueryTestAPI) ForEachDevice(
 	visit func(netboxclient.Device) (bool, error),
 ) error {
 	a.deviceQueries++
-	a.deviceQuery = make(netboxclient.DeviceQuery, len(query))
-	for key, value := range query {
-		a.deviceQuery[key] = value
-	}
+	a.deviceQuery = maps.Clone(query)
 	if a.deviceErr != nil {
 		return a.deviceErr
 	}
@@ -190,18 +197,26 @@ func (a *selectorQueryTestAPI) ForEachDeviceCustomField(
 	return errors.New("unexpected custom-field metadata lookup")
 }
 
-func (a *selectorQueryTestAPI) GetDevice(context.Context, string) (netboxclient.DeviceSnapshot, error) {
+func (a *selectorQueryTestAPI) GetDevice(_ context.Context, id string) (netboxclient.DeviceSnapshot, error) {
+	a.deviceReadCalls++
+	a.deviceReadIDs = append(a.deviceReadIDs, id)
+	if index := a.deviceReadCalls - 1; index < len(a.deviceSnapshots) {
+		return a.deviceSnapshots[index], nil
+	}
 	return a.deviceSnapshot, nil
 }
 
 func (a *selectorQueryTestAPI) PatchDevice(
-	context.Context,
-	string,
-	netboxclient.DevicePatch,
-	string,
+	_ context.Context,
+	id string,
+	patch netboxclient.DevicePatch,
+	etag string,
 ) (netboxclient.DeviceSnapshot, error) {
 	a.patchCalls++
-	return netboxclient.DeviceSnapshot{}, nil
+	a.patchDeviceID = id
+	a.patch = patch
+	a.patchETag = etag
+	return a.patchSnapshot, a.patchErr
 }
 
 var _ = Describe("NetBox selector query", func() {
@@ -360,7 +375,145 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		Entry("missing managed field", map[string]interface{}{"osac_instance_id": ""}, true),
 		Entry("malformed managed field", map[string]interface{}{"osac_managed": "true"}, true),
 	)
+
+	It("claims a free managed device with its ETag and confirms the assignment", func() {
+		freeDevice := testNetBoxAssignmentSnapshot(netBoxStatusStaged, "")
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: freeDevice,
+			patchSnapshot:  testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
+		}
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(host).To(Equal(expectedTestNetBoxAssignedHost("bmi-123")))
+		Expect(api.deviceReadIDs).To(Equal([]string{"46"}))
+		Expect(api.patchCalls).To(Equal(1))
+		Expect(api.patchDeviceID).To(Equal("46"))
+		Expect(api.patchETag).To(Equal(freeDevice.ETag))
+		Expect(api.patch.Status).NotTo(BeNil())
+		Expect(*api.patch.Status).To(Equal(netBoxStatusActive))
+		Expect(api.patch.CustomFields).To(Equal(map[string]interface{}{"osac_instance_id": "bmi-123"}))
+	})
+
+	It("returns an existing assignment without patching the device", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
+		}
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(host).To(Equal(expectedTestNetBoxAssignedHost("bmi-123")))
+		Expect(api.patchCalls).To(BeZero())
+	})
+
+	It("does not claim a free device without an ETag", func() {
+		freeDevice := testNetBoxAssignmentSnapshot(netBoxStatusStaged, "")
+		freeDevice.ETag = ""
+		api := &selectorQueryTestAPI{deviceSnapshot: freeDevice}
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("missing an ETag")))
+		Expect(api.patchCalls).To(BeZero())
+	})
+
+	It("returns non-conflict PATCH errors", func() {
+		patchErr := errors.New("NetBox unavailable")
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""),
+			patchErr:       patchErr,
+		}
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("failed to claim NetBox device")))
+		Expect(errors.Is(err, patchErr)).To(BeTrue())
+		Expect(api.patchCalls).To(Equal(1))
+	})
+
+	It("returns an error when a successful PATCH does not confirm the assignment", func() {
+		freeDevice := testNetBoxAssignmentSnapshot(netBoxStatusStaged, "")
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: freeDevice,
+			patchSnapshot:  freeDevice,
+		}
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("did not confirm the host assignment")))
+		Expect(api.patchCalls).To(Equal(1))
+	})
+
+	DescribeTable("reconciles a claim after a 412 response",
+		func(latest netboxclient.DeviceSnapshot, wantHost bool, wantErr string) {
+			api := &selectorQueryTestAPI{
+				deviceSnapshots: []netboxclient.DeviceSnapshot{
+					testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""),
+					latest,
+				},
+				patchErr: &netboxclient.APIError{
+					Kind:       netboxclient.ErrorKindConflict,
+					StatusCode: http.StatusPreconditionFailed,
+				},
+			}
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+
+			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+			if wantHost {
+				Expect(host).To(Equal(expectedTestNetBoxAssignedHost("bmi-123")))
+			} else {
+				Expect(host).To(BeNil())
+			}
+			if wantErr != "" {
+				Expect(err).To(MatchError(ContainSubstring(wantErr)))
+			} else {
+				Expect(err).NotTo(HaveOccurred())
+			}
+			Expect(api.patchCalls).To(Equal(1))
+			Expect(api.deviceReadIDs).To(Equal([]string{"46", "46"}))
+		},
+		Entry("now owned by this instance", testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"), true, ""),
+		Entry("now owned by another instance", testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-456"), false, ""),
+		Entry("still free", testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""), false, "changed during assignment"),
+	)
 })
+
+func testNetBoxAssignmentSnapshot(status, instanceID string) netboxclient.DeviceSnapshot {
+	return netboxclient.DeviceSnapshot{
+		Device: netboxclient.Device{
+			ID:     "46",
+			Status: status,
+			CustomFields: map[string]interface{}{
+				"osac_managed":     true,
+				"osac_instance_id": instanceID,
+			},
+		},
+		ETag: `W/"device-revision-1"`,
+	}
+}
+
+func expectedTestNetBoxAssignedHost(instanceID string) *Host {
+	return &Host{
+		InventoryHostID:     "metal3-system/netbox-46",
+		Name:                "netbox-46",
+		HostClass:           testNetBoxHostClass,
+		ProvisionState:      shared.OsacDefaultProvisionStateValue,
+		ManagedBy:           shared.OsacDefaultManagedByValue,
+		Ready:               true,
+		BareMetalInstanceID: instanceID,
+	}
+}
 
 func testNetBoxSelectorBMHManager() *baremetalhost.Manager {
 	return baremetalhost.NewManager(nil, nil, "metal3-system")
