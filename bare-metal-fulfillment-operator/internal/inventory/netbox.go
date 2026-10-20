@@ -96,7 +96,7 @@ type NetBoxClient struct {
 	api        NetBoxAPI
 	bmhManager baremetalhost.BMHLifecycleManager
 	hostClass  string
-	secretAPI  secretapi.Reader
+	secretAPI  *secretapi.Client
 }
 
 var (
@@ -126,7 +126,7 @@ func NewNetBoxAPI(config *Config) (NetBoxAPI, error) {
 }
 
 // NewNetBoxClient creates a NetBox inventory client with injected dependencies.
-func NewNetBoxClient(api NetBoxAPI, bmhManager baremetalhost.BMHLifecycleManager, hostClass string, secretAPI secretapi.Reader) *NetBoxClient {
+func NewNetBoxClient(api NetBoxAPI, bmhManager baremetalhost.BMHLifecycleManager, hostClass string, secretAPI *secretapi.Client) *NetBoxClient {
 	return &NetBoxClient{
 		api:        api,
 		bmhManager: bmhManager,
@@ -140,11 +140,7 @@ func (c *NetBoxClient) Close() error {
 	if c == nil || c.secretAPI == nil {
 		return nil
 	}
-	closer, ok := c.secretAPI.(interface{ Close() error })
-	if !ok {
-		return nil
-	}
-	return closer.Close()
+	return c.secretAPI.Close()
 }
 
 func (c *NetBoxClient) FindFreeHost(ctx context.Context, selector map[string]string) (*Host, error) {

@@ -66,12 +66,6 @@ type ListResult struct {
 	Total int32
 }
 
-// Reader exposes the private API operations used by inventory backends.
-type Reader interface {
-	List(ctx context.Context, filter string, limit int32) (ListResult, error)
-	Get(ctx context.Context, id string) (Secret, error)
-}
-
 type secretsAPI interface {
 	List(ctx context.Context, request *privatev1.SecretsListRequest, options ...grpc.CallOption) (*privatev1.SecretsListResponse, error)
 	Get(ctx context.Context, request *privatev1.SecretsGetRequest, options ...grpc.CallOption) (*privatev1.SecretsGetResponse, error)
@@ -84,8 +78,6 @@ type Client struct {
 	closeOnce sync.Once
 	closeErr  error
 }
-
-var _ Reader = (*Client)(nil)
 
 // New creates an authenticated TLS client. OAuth client credentials are read
 // from mounted files and are never retained in the returned configuration.
