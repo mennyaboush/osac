@@ -347,34 +347,33 @@ var _ = Describe("NetBox selector query", func() {
 })
 
 var _ = Describe("NetBox assignment eligibility", func() {
-	DescribeTable("does not claim a staged device unless it is explicitly managed",
-		func(customFields map[string]interface{}, wantErr bool) {
-			api := &selectorQueryTestAPI{
-				deviceSnapshot: netboxclient.DeviceSnapshot{
-					Device: netboxclient.Device{
-						ID:           "46",
-						Status:       "staged",
-						CustomFields: customFields,
-					},
-					ETag: `W/"device-revision-1"`,
-				},
-			}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+	It("trusts the managed filter used when the device was selected", func() {
+		freeDevice := testNetBoxAssignmentSnapshot(netBoxStatusStaged, "")
+		freeDevice.Device.CustomFields["osac_managed"] = false
+		claimedDevice := testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123")
+		claimedDevice.Device.CustomFields["osac_managed"] = false
+		api := &selectorQueryTestAPI{deviceSnapshot: freeDevice, patchSnapshot: claimedDevice}
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
 
-			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
-			Expect(host).To(BeNil())
-			if wantErr {
-				Expect(err).To(MatchError(ContainSubstring("osac_managed")))
-			} else {
-				Expect(err).NotTo(HaveOccurred())
-			}
-			Expect(api.patchCalls).To(BeZero())
-		},
-		Entry("unmanaged", map[string]interface{}{"osac_managed": false}, false),
-		Entry("missing managed field", map[string]interface{}{"osac_instance_id": ""}, true),
-		Entry("malformed managed field", map[string]interface{}{"osac_managed": "true"}, true),
-	)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(host).To(Equal(expectedTestNetBoxAssignedHost("bmi-123")))
+		Expect(api.patchCalls).To(Equal(1))
+	})
+
+	It("does not claim a device that became active without an owner", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, ""),
+		}
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(host).To(BeNil())
+		Expect(err).To(MatchError(ContainSubstring("active without an assigned instance")))
+		Expect(api.patchCalls).To(BeZero())
+	})
 
 	It("claims a free managed device with its ETag and confirms the assignment", func() {
 		freeDevice := testNetBoxAssignmentSnapshot(netBoxStatusStaged, "")

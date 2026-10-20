@@ -283,14 +283,6 @@ func (c *NetBoxClient) reconcileNetBoxClaimConflict(ctx context.Context, namespa
 }
 
 func (c *NetBoxClient) netBoxAssignmentForDevice(namespace string, device netboxclient.Device, bareMetalInstanceID string) (*Host, bool, error) {
-	managed, ok := device.CustomFields["osac_managed"].(bool)
-	if !ok {
-		return nil, false, errors.New("NetBox device has a missing or malformed osac_managed custom field")
-	}
-	if !managed {
-		return nil, false, nil
-	}
-
 	owner, claimable, err := netBoxDeviceAssignmentState(device)
 	if err != nil {
 		return nil, false, err
