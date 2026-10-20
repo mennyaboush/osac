@@ -584,10 +584,9 @@ The authorization policy distinguishes between the following subject categories:
 
 #### NetBox-backed BMF Secret API
 
-The bundled `osac` realm defines the confidential client `osac-bmf`, enables service accounts,
-and assigns the `osac-bmf-secret-reader` realm role to its service account. The authorization
-policy checks that role in the validated JWT and allows only private Secrets `Get` and `List`
-calls for the `system` tenant.
+BMF reuses the existing `osac-controller` OAuth service-account credentials for the Secret API.
+That service account is already authorized as a platform administrator, so no BMF-specific
+OAuth client or realm role is required.
 
 ### Authorization Logic
 
