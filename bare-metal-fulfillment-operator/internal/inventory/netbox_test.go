@@ -593,28 +593,17 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(api.patch.CustomFields).NotTo(HaveKey("password"))
 	})
 
-	It("marks the device failed and returns no host for invalid credentials", func() {
-		api := &selectorQueryTestAPI{
-			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
-			patchSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{
-				ID:     "46",
-				Status: "failed",
-			}},
-		}
+	It("returns deterministic credential errors without changing NetBox", func() {
+		api := &selectorQueryTestAPI{deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`)}
 		resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("no system-scoped OSAC Secret is associated"))}
 		client := newTestNetBoxClient(api, resolver)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
 		Expect(host).To(BeNil())
-		Expect(err).NotTo(HaveOccurred())
+		Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeTrue())
 		Expect(resolver.calls).To(Equal(1))
-		Expect(api.patchCalls).To(Equal(1))
-		Expect(api.patchDeviceID).To(Equal("46"))
-		Expect(api.patchETag).To(Equal(`W/"device-revision-1"`))
-		Expect(api.patch.Status).NotTo(BeNil())
-		Expect(*api.patch.Status).To(Equal("failed"))
-		Expect(api.patch.CustomFields).To(BeEmpty())
+		Expect(api.patchCalls).To(BeZero())
 	})
 
 	It("returns retryable resolver errors without changing device status", func() {
@@ -629,36 +618,6 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(err.Error()).NotTo(ContainSubstring("source-password"))
 		Expect(resolver.calls).To(Equal(1))
 		Expect(api.patchCalls).To(BeZero())
-	})
-
-	It("returns an error when the failed status update cannot be confirmed", func() {
-		api := &selectorQueryTestAPI{
-			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
-			patchErr:       errors.New("NetBox is unavailable"),
-		}
-		resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("invalid credentials"))}
-		client := newTestNetBoxClient(api, resolver)
-
-		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
-
-		Expect(host).To(BeNil())
-		Expect(err).To(MatchError(ContainSubstring("failed to mark NetBox device failed")))
-		Expect(api.patchCalls).To(Equal(1))
-	})
-
-	It("does not return no host when NetBox does not confirm the failed status", func() {
-		api := &selectorQueryTestAPI{
-			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
-			patchSnapshot:  stagedManagedDeviceSnapshot(`W/"device-revision-2"`),
-		}
-		resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("invalid credentials"))}
-		client := newTestNetBoxClient(api, resolver)
-
-		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
-
-		Expect(host).To(BeNil())
-		Expect(err).To(MatchError(ContainSubstring("did not confirm the device failed")))
-		Expect(api.patchCalls).To(Equal(1))
 	})
 
 	It("returns an existing same-owner assignment without resolving credentials again", func() {

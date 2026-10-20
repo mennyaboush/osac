@@ -26,8 +26,6 @@ import (
 	"strconv"
 	"strings"
 
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
-
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/bmcdiscovery"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/netboxclient"
@@ -38,7 +36,6 @@ import (
 const (
 	netBoxHostPrefix   = "netbox-"
 	netBoxStatusActive = "active"
-	netBoxStatusFailed = "failed"
 	netBoxStatusStaged = "staged"
 )
 
@@ -279,10 +276,6 @@ func (c *NetBoxClient) assignNetBoxDevice(ctx context.Context, namespace, device
 	case netBoxAssignmentReadyToClaim:
 		// OSAC-5952 will use the resolved credentials when preparing the Metal3 host.
 		if _, err := c.credentialResolver.Resolve(ctx, snapshot.Device); err != nil {
-			if errors.Is(err, ErrCredentialResolutionFailed) {
-				ctrllog.FromContext(ctx).Error(err, "NetBox device credential resolution failed; marking device failed", "deviceID", deviceID)
-				return c.markNetBoxDeviceFailed(ctx, deviceID, snapshot.ETag)
-			}
 			return nil, fmt.Errorf("failed to resolve NetBox BMC credentials: %w", err)
 		}
 		return c.claimNetBoxDevice(ctx, namespace, deviceID, bareMetalInstanceID, snapshot.ETag)
@@ -293,21 +286,6 @@ func (c *NetBoxClient) assignNetBoxDevice(ctx context.Context, namespace, device
 	default:
 		return nil, fmt.Errorf("unknown NetBox assignment state: %d", state)
 	}
-}
-
-func (c *NetBoxClient) markNetBoxDeviceFailed(ctx context.Context, deviceID, etag string) (*Host, error) {
-	failed := netBoxStatusFailed
-	updated, err := c.api.PatchDevice(ctx, deviceID, netboxclient.DevicePatch{Status: &failed}, etag)
-	if err != nil {
-		return nil, fmt.Errorf("failed to mark NetBox device failed after credential resolution error: %w", err)
-	}
-	if updated.Device.ID != deviceID {
-		return nil, errors.New("NetBox returned a different device after marking it failed")
-	}
-	if updated.Device.Status != netBoxStatusFailed {
-		return nil, errors.New("NetBox response did not confirm the device failed after credential resolution error")
-	}
-	return nil, nil
 }
 
 func (c *NetBoxClient) claimNetBoxDevice(ctx context.Context, namespace, deviceID, bareMetalInstanceID, etag string) (*Host, error) {
@@ -440,15 +418,20 @@ type DeviceCredentialResolver interface {
 	Resolve(ctx context.Context, device netboxclient.Device) (*NetBoxCredentials, error)
 }
 
+type netBoxSecretReader interface {
+	List(ctx context.Context, filter string, limit int32) (secretapi.ListResult, error)
+	Get(ctx context.Context, id string) (secretapi.Secret, error)
+}
+
 // NetBoxCredentialResolver finds the system Secret associated with a NetBox device.
 type NetBoxCredentialResolver struct {
-	secrets secretapi.Reader
+	secrets netBoxSecretReader
 }
 
 var _ DeviceCredentialResolver = (*NetBoxCredentialResolver)(nil)
 
 // NewNetBoxCredentialResolver creates the NetBox-specific Secret resolver.
-func NewNetBoxCredentialResolver(secrets secretapi.Reader) *NetBoxCredentialResolver {
+func NewNetBoxCredentialResolver(secrets netBoxSecretReader) *NetBoxCredentialResolver {
 	return &NetBoxCredentialResolver{secrets: secrets}
 }
 
