@@ -222,7 +222,7 @@ var _ = Describe("NetBox selector query", func() {
 	Describe("FindFreeHost", func() {
 		It("returns an error when the Metal3 namespace is missing without querying NetBox", func() {
 			api := &selectorQueryTestAPI{}
-			client := NewNetBoxClient(api, baremetalhost.NewManager(nil, nil, ""), testNetBoxHostClass)
+			client := NewNetBoxClient(api, baremetalhost.NewManager(nil, nil, ""), testNetBoxHostClass, nil)
 
 			host, err := client.FindFreeHost(context.Background(), nil)
 
@@ -238,7 +238,7 @@ var _ = Describe("NetBox selector query", func() {
 					{ID: "47", Name: "netbox-device-47"},
 				},
 			}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 			selector := map[string]string{
 				"cpu_cores":      "9007199254740993",
 				"accelerated":    "true",
@@ -273,7 +273,7 @@ var _ = Describe("NetBox selector query", func() {
 
 		It("keeps the required managed filter when the selector requests another value", func() {
 			api := &selectorQueryTestAPI{}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 			_, err := client.FindFreeHost(context.Background(), map[string]string{"osac_managed": "false"})
 
@@ -284,7 +284,7 @@ var _ = Describe("NetBox selector query", func() {
 
 		It("queries the fixed free-host filters when the selector is empty", func() {
 			api := &selectorQueryTestAPI{}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 			host, err := client.FindFreeHost(context.Background(), nil)
 
@@ -302,7 +302,7 @@ var _ = Describe("NetBox selector query", func() {
 		It("returns device-list errors", func() {
 			apiError := errors.New("device endpoint unavailable")
 			api := &selectorQueryTestAPI{deviceErr: apiError}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 			host, err := client.FindFreeHost(context.Background(), map[string]string{"placement_zone": "west"})
 
