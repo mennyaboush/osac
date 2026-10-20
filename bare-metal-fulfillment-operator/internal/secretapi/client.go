@@ -133,7 +133,7 @@ func validateIssuerURL(issuerURL string) (string, error) {
 		return "", errors.New("Secret API issuer URL is required")
 	}
 	parsed, err := url.Parse(issuerURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || strings.ContainsAny(issuerURL, "?#") {
 		return "", errors.New("Secret API issuer URL must use HTTPS")
 	}
 	return strings.TrimRight(issuerURL, "/"), nil
