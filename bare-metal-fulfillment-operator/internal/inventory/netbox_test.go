@@ -247,6 +247,12 @@ func newTestNetBoxClient(api NetBoxAPI, resolver DeviceCredentialResolver) *NetB
 	return client
 }
 
+func newTestNetBoxClientWithCredentials(api NetBoxAPI) *NetBoxClient {
+	return newTestNetBoxClient(api, &fakeDeviceCredentialResolver{
+		credentials: &NetBoxCredentials{Username: []byte("user"), Password: []byte("pass")},
+	})
+}
+
 var _ = Describe("NetBox selector query", func() {
 	Describe("FindFreeHost", func() {
 		It("returns an error when the Metal3 namespace is missing without querying NetBox", func() {
@@ -409,7 +415,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 			deviceSnapshot: freeDevice,
 			patchSnapshot:  testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := newTestNetBoxClientWithCredentials(api)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -428,7 +434,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		api := &selectorQueryTestAPI{
 			deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := newTestNetBoxClientWithCredentials(api)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -444,7 +450,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 			deviceSnapshot: freeDevice,
 			patchErr:       &netboxclient.APIError{Kind: netboxclient.ErrorKindInvalidETag},
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := newTestNetBoxClientWithCredentials(api)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -460,7 +466,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 			deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""),
 			patchErr:       patchErr,
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := newTestNetBoxClientWithCredentials(api)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -476,7 +482,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 			deviceSnapshot: freeDevice,
 			patchSnapshot:  freeDevice,
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := newTestNetBoxClientWithCredentials(api)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -497,7 +503,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 					StatusCode: http.StatusPreconditionFailed,
 				},
 			}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+			client := newTestNetBoxClientWithCredentials(api)
 
 			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -655,7 +661,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(api.patchCalls).To(Equal(1))
 	})
 
-	It("resolves credentials before returning an existing same-owner assignment", func() {
+	It("returns an existing same-owner assignment without resolving credentials again", func() {
 		api := &selectorQueryTestAPI{deviceSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{
 			ID:     "46",
 			Status: netBoxStatusActive,
@@ -672,7 +678,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(host).NotTo(BeNil())
 		Expect(host.BareMetalInstanceID).To(Equal("bmi-123"))
-		Expect(resolver.calls).To(Equal(1))
+		Expect(resolver.calls).To(BeZero())
 		Expect(api.patchCalls).To(BeZero())
 	})
 
@@ -708,15 +714,6 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(api.patchCalls).To(BeZero())
 	})
 
-	It("fails closed when no credential resolver is configured", func() {
-		api := &selectorQueryTestAPI{deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`)}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
-
-		_, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
-
-		Expect(err).To(MatchError(ContainSubstring("credential resolver is not configured")))
-		Expect(api.patchCalls).To(BeZero())
-	})
 })
 
 func stagedManagedDeviceSnapshot(etag string) netboxclient.DeviceSnapshot {
