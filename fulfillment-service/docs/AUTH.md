@@ -582,12 +582,6 @@ The authorization policy distinguishes between the following subject categories:
 
 4. **Client Subjects**: All other authenticated users (JWT tokens from Keycloak that are not admin, tenant-admin, or tenant-idp-manager).
 
-#### NetBox-backed BMF Secret API
-
-BMF reuses the existing `osac-controller` OAuth service-account credentials for the Secret API.
-That service account is already authorized as a platform administrator, so no BMF-specific
-OAuth client or realm role is required.
-
 ### Authorization Logic
 
 The authorization policy allows:
