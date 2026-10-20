@@ -82,12 +82,12 @@ var _ = Describe("Secret API client", func() {
 			roots.AddCert(server.Certificate())
 			issuerURL, err := validateIssuerURL(server.URL + "/realms/osac/")
 			Expect(err).NotTo(HaveOccurred())
-			tokenSource := newTokenSource(issuerURL, "osac-bmf", "client-secret", &tls.Config{RootCAs: roots})
+			tokenSource := newTokenSource(issuerURL, "test-client", "client-secret", &tls.Config{RootCAs: roots})
 			token, err := tokenSource.Token()
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(token.AccessToken).To(Equal("test-access-token"))
-			Expect(<-requests).To(Equal(tokenRequest{"/realms/osac/protocol/openid-connect/token", "osac-bmf", "client-secret", "client_credentials"}))
+			Expect(<-requests).To(Equal(tokenRequest{"/realms/osac/protocol/openid-connect/token", "test-client", "client-secret", "client_credentials"}))
 		})
 
 		It("does not follow redirects from the token endpoint", func() {
@@ -107,7 +107,7 @@ var _ = Describe("Secret API client", func() {
 			roots.AddCert(issuer.Certificate())
 			issuerURL, err := validateIssuerURL(issuer.URL + "/realms/osac")
 			Expect(err).NotTo(HaveOccurred())
-			tokenSource := newTokenSource(issuerURL, "osac-bmf", "client-secret", &tls.Config{RootCAs: roots})
+			tokenSource := newTokenSource(issuerURL, "test-client", "client-secret", &tls.Config{RootCAs: roots})
 			_, err = tokenSource.Token()
 
 			Expect(err).To(HaveOccurred())

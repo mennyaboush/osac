@@ -213,7 +213,7 @@ var _ = Describe("createInventoryClient", func() {
 		tokenFile := filepath.Join(GinkgoT().TempDir(), "netbox-token")
 		Expect(os.WriteFile(tokenFile, []byte("test-token\n"), 0o600)).To(Succeed())
 		clientIDFile := filepath.Join(GinkgoT().TempDir(), "secret-api-client-id")
-		Expect(os.WriteFile(clientIDFile, []byte("osac-bmf\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(clientIDFile, []byte("osac-controller\n"), 0o600)).To(Succeed())
 		clientSecretFile := filepath.Join(GinkgoT().TempDir(), "secret-api-client-secret")
 		Expect(os.WriteFile(clientSecretFile, []byte("test-client-secret\n"), 0o600)).To(Succeed())
 		GinkgoT().Setenv(envSecretAPIURL, "https://fulfillment.example.test:8001")
