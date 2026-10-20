@@ -242,6 +242,6 @@ var _ = Describe("createInventoryClient", func() {
 		inventoryClient, err := createInventoryClient(context.Background(), inventoryCfg, managementCfg, mgr)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(inventoryClient).To(BeAssignableToTypeOf(&inventory.NetBoxClient{}))
-		Expect(inventoryClient.(interface{ Close() error }).Close()).To(Succeed())
+		Expect(inventoryClient.(*inventory.NetBoxClient).Close()).To(Succeed())
 	})
 })
