@@ -28,7 +28,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
@@ -71,17 +70,15 @@ type secretsAPI interface {
 	Get(ctx context.Context, request *privatev1.SecretsGetRequest, options ...grpc.CallOption) (*privatev1.SecretsGetResponse, error)
 }
 
-// Client calls the private Secrets API using the configured OAuth client.
-type Client struct {
-	api       secretsAPI
-	conn      *grpc.ClientConn
-	closeOnce sync.Once
-	closeErr  error
+// client calls the private Secrets API using the configured OAuth client.
+type client struct {
+	api  secretsAPI
+	conn *grpc.ClientConn
 }
 
 // New creates an authenticated TLS client. OAuth client credentials are read
 // from mounted files and are never retained in the returned configuration.
-func New(config Config) (*Client, error) {
+func New(config Config) (*client, error) {
 	endpoint, err := parseEndpoint(config.Endpoint)
 	if err != nil {
 		return nil, err
@@ -106,7 +103,7 @@ func New(config Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{api: privatev1.NewSecretsClient(conn), conn: conn}, nil
+	return &client{api: privatev1.NewSecretsClient(conn), conn: conn}, nil
 }
 
 func parseEndpoint(endpoint string) (string, error) {
@@ -199,10 +196,7 @@ func newConnection(endpoint string, tlsConfig *tls.Config, tokenSource oauth2.To
 
 // List returns matching Secret metadata. Secret data is available only from
 // Get and is never copied from a List response.
-func (c *Client) List(ctx context.Context, filter string, limit int32) (ListResult, error) {
-	if c == nil || c.api == nil {
-		return ListResult{}, errors.New("Secret API client is not configured")
-	}
+func (c *client) List(ctx context.Context, filter string, limit int32) (ListResult, error) {
 	if strings.TrimSpace(filter) == "" {
 		return ListResult{}, errors.New("Secret API filter is required")
 	}
@@ -214,7 +208,7 @@ func (c *Client) List(ctx context.Context, filter string, limit int32) (ListResu
 		return ListResult{}, fmt.Errorf("failed to list OSAC Secrets: %w", err)
 	}
 	if response == nil {
-		return ListResult{}, errors.New("OSAC Secret API returned an empty list response")
+		return ListResult{Items: []Secret{}}, nil
 	}
 	result := ListResult{Total: response.GetTotal(), Items: make([]Secret, 0, len(response.GetItems()))}
 	for _, item := range response.GetItems() {
@@ -226,10 +220,7 @@ func (c *Client) List(ctx context.Context, filter string, limit int32) (ListResu
 }
 
 // Get returns one Secret, including its opaque data fields.
-func (c *Client) Get(ctx context.Context, id string) (Secret, error) {
-	if c == nil || c.api == nil {
-		return Secret{}, errors.New("Secret API client is not configured")
-	}
+func (c *client) Get(ctx context.Context, id string) (Secret, error) {
 	if strings.TrimSpace(id) == "" {
 		return Secret{}, errors.New("Secret API secret ID is required")
 	}
@@ -247,45 +238,15 @@ func secretFromProto(secret *privatev1.Secret, includeData bool) Secret {
 	result := Secret{ID: secret.GetId()}
 	if metadata := secret.GetMetadata(); metadata != nil {
 		result.Tenant = metadata.GetTenant()
-		result.Labels = cloneStringMap(metadata.GetLabels())
+		result.Labels = metadata.GetLabels()
 	}
 	if includeData {
-		result.Data = cloneByteMap(secret.GetData())
-	}
-	return result
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	if values == nil {
-		return nil
-	}
-	result := make(map[string]string, len(values))
-	for key, value := range values {
-		result[key] = value
-	}
-	return result
-}
-
-func cloneByteMap(values map[string][]byte) map[string][]byte {
-	if values == nil {
-		return nil
-	}
-	result := make(map[string][]byte, len(values))
-	for key, value := range values {
-		result[key] = append([]byte(nil), value...)
+		result.Data = secret.GetData()
 	}
 	return result
 }
 
 // Close releases the gRPC connection owned by the client.
-func (c *Client) Close() error {
-	if c == nil {
-		return nil
-	}
-	c.closeOnce.Do(func() {
-		if c.conn != nil {
-			c.closeErr = c.conn.Close()
-		}
-	})
-	return c.closeErr
+func (c *client) Close() error {
+	return c.conn.Close()
 }

@@ -127,7 +127,7 @@ var _ = Describe("Secret API client", func() {
 					}},
 				},
 			}
-			client := &Client{api: api}
+			client := &client{api: api}
 
 			got, err := client.List(context.Background(), `this.metadata.tenant == "system"`, 2)
 
@@ -142,9 +142,20 @@ var _ = Describe("Secret API client", func() {
 			Expect(got.Items[0].Data).To(BeEmpty())
 		})
 
+		It("returns an empty result when no Secrets match", func() {
+			client := &client{api: &fakeSecretsRPC{}}
+
+			got, err := client.List(context.Background(), `this.metadata.tenant == "system"`, 2)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(got.Total).To(BeZero())
+			Expect(got.Items).To(BeEmpty())
+			Expect(got.Items).NotTo(BeNil())
+		})
+
 		It("returns an error when the API request fails", func() {
 			api := &fakeSecretsRPC{listError: errors.New("unavailable")}
-			client := &Client{api: api}
+			client := &client{api: api}
 
 			_, err := client.List(context.Background(), "filter", 2)
 
@@ -154,7 +165,7 @@ var _ = Describe("Secret API client", func() {
 
 		It("rejects an empty filter and non-positive limit without calling the API", func() {
 			api := &fakeSecretsRPC{}
-			client := &Client{api: api}
+			client := &client{api: api}
 
 			_, err := client.List(context.Background(), "", 2)
 			Expect(err).To(MatchError(ContainSubstring("filter is required")))
@@ -167,7 +178,7 @@ var _ = Describe("Secret API client", func() {
 	})
 
 	Describe("Get", func() {
-		It("returns Secret metadata and copies binary data", func() {
+		It("returns Secret metadata and binary data", func() {
 			password := []byte{0x00, 0xff, 0x41}
 			api := &fakeSecretsRPC{
 				getResponse: &privatev1.SecretsGetResponse{Object: &privatev1.Secret{
@@ -176,7 +187,7 @@ var _ = Describe("Secret API client", func() {
 					Data:     map[string][]byte{"username": []byte("admin"), "password": password},
 				}},
 			}
-			client := &Client{api: api}
+			client := &client{api: api}
 
 			got, err := client.Get(context.Background(), "secret-1")
 
@@ -186,13 +197,11 @@ var _ = Describe("Secret API client", func() {
 			Expect(got.Tenant).To(Equal("system"))
 			Expect(got.Data["username"]).To(Equal([]byte("admin")))
 			Expect(got.Data["password"]).To(Equal(password))
-			got.Data["password"][0] = 0x7f
-			Expect(password[0]).To(Equal(byte(0x00)))
 		})
 
 		It("rejects an empty ID without calling the API", func() {
 			api := &fakeSecretsRPC{}
-			client := &Client{api: api}
+			client := &client{api: api}
 
 			_, err := client.Get(context.Background(), " ")
 
@@ -202,7 +211,7 @@ var _ = Describe("Secret API client", func() {
 
 		It("returns an error when the API request fails", func() {
 			api := &fakeSecretsRPC{getError: errors.New("unavailable")}
-			client := &Client{api: api}
+			client := &client{api: api}
 
 			_, err := client.Get(context.Background(), "secret-1")
 
@@ -289,7 +298,6 @@ var _ = Describe("Secret API client", func() {
 			})
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(client.Close()).To(Succeed())
 			Expect(client.Close()).To(Succeed())
 		})
 	})
