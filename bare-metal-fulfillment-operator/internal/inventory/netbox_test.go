@@ -409,17 +409,21 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		Expect(api.patchCalls).To(BeZero())
 	})
 
-	It("does not claim a free device without an ETag", func() {
+	It("propagates the client error for a free device without an ETag", func() {
 		freeDevice := testNetBoxAssignmentSnapshot(netBoxStatusStaged, "")
 		freeDevice.ETag = ""
-		api := &selectorQueryTestAPI{deviceSnapshot: freeDevice}
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: freeDevice,
+			patchErr:       &netboxclient.APIError{Kind: netboxclient.ErrorKindInvalidETag},
+		}
 		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
 		Expect(host).To(BeNil())
-		Expect(err).To(MatchError(ContainSubstring("missing an ETag")))
-		Expect(api.patchCalls).To(BeZero())
+		Expect(err).To(MatchError(ContainSubstring("NetBox device ETag is missing or invalid")))
+		Expect(api.patchCalls).To(Equal(1))
+		Expect(api.patchETag).To(BeEmpty())
 	})
 
 	It("returns non-conflict PATCH errors", func() {

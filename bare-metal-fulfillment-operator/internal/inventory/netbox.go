@@ -34,6 +34,16 @@ const (
 	netBoxStatusStaged = "staged"
 )
 
+type netBoxAssignmentState uint8
+
+const (
+	netBoxAssignmentUnspecified netBoxAssignmentState = iota
+	netBoxAssignmentReadyToClaim
+	netBoxAssignmentOwnedByThisInstance
+	netBoxAssignmentOwnedByAnotherInstance
+	netBoxAssignmentUnavailable
+)
+
 var errNetBoxClientNotImplemented = errors.New("NetBox inventory client is not implemented")
 
 // NetBoxAPI defines the operations needed by the inventory adapter. It is
@@ -226,17 +236,21 @@ func (c *NetBoxClient) readNetBoxDevice(ctx context.Context, deviceID string) (n
 }
 
 func (c *NetBoxClient) assignNetBoxDevice(ctx context.Context, namespace, deviceID, bareMetalInstanceID string, snapshot netboxclient.DeviceSnapshot) (*Host, error) {
-	host, claimable, err := c.netBoxAssignmentForDevice(namespace, snapshot.Device, bareMetalInstanceID)
+	state, err := classifyNetBoxAssignment(snapshot.Device, bareMetalInstanceID)
 	if err != nil {
 		return nil, err
 	}
-	if host != nil || !claimable {
-		return host, nil
+
+	switch state {
+	case netBoxAssignmentReadyToClaim:
+		return c.claimNetBoxDevice(ctx, namespace, deviceID, bareMetalInstanceID, snapshot.ETag)
+	case netBoxAssignmentOwnedByThisInstance:
+		return c.netBoxAssignedHost(namespace, snapshot.Device, bareMetalInstanceID), nil
+	case netBoxAssignmentOwnedByAnotherInstance, netBoxAssignmentUnavailable:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unknown NetBox assignment state: %d", state)
 	}
-	if strings.TrimSpace(snapshot.ETag) == "" {
-		return nil, errors.New("NetBox device response is missing an ETag")
-	}
-	return c.claimNetBoxDevice(ctx, namespace, deviceID, bareMetalInstanceID, snapshot.ETag)
 }
 
 func (c *NetBoxClient) claimNetBoxDevice(ctx context.Context, namespace, deviceID, bareMetalInstanceID, etag string) (*Host, error) {
@@ -255,14 +269,14 @@ func (c *NetBoxClient) claimNetBoxDevice(ctx context.Context, namespace, deviceI
 	if claimed.Device.ID != deviceID {
 		return nil, errors.New("NetBox returned a different device after the claim")
 	}
-	host, _, err := c.netBoxAssignmentForDevice(namespace, claimed.Device, bareMetalInstanceID)
+	state, err := classifyNetBoxAssignment(claimed.Device, bareMetalInstanceID)
 	if err != nil {
 		return nil, err
 	}
-	if host == nil {
+	if state != netBoxAssignmentOwnedByThisInstance {
 		return nil, errors.New("NetBox response did not confirm the host assignment")
 	}
-	return host, nil
+	return c.netBoxAssignedHost(namespace, claimed.Device, bareMetalInstanceID), nil
 }
 
 func (c *NetBoxClient) reconcileNetBoxClaimConflict(ctx context.Context, namespace, deviceID, bareMetalInstanceID string) (*Host, error) {
@@ -270,49 +284,55 @@ func (c *NetBoxClient) reconcileNetBoxClaimConflict(ctx context.Context, namespa
 	if err != nil {
 		return nil, fmt.Errorf("failed to re-read NetBox device after a claim conflict: %w", err)
 	}
-	host, claimable, err := c.netBoxAssignmentForDevice(namespace, latest.Device, bareMetalInstanceID)
+	state, err := classifyNetBoxAssignment(latest.Device, bareMetalInstanceID)
 	if err != nil {
 		return nil, err
 	}
-	if host != nil || !claimable {
-		return host, nil
+
+	switch state {
+	case netBoxAssignmentOwnedByThisInstance:
+		return c.netBoxAssignedHost(namespace, latest.Device, bareMetalInstanceID), nil
+	case netBoxAssignmentOwnedByAnotherInstance, netBoxAssignmentUnavailable:
+		return nil, nil
+	case netBoxAssignmentReadyToClaim:
+		// Preserve the saved ID when the device is still free; the next reconcile
+		// will use a fresh ETag rather than selecting a different device.
+		return nil, errors.New("NetBox device changed during assignment; retry on the next reconciliation")
+	default:
+		return nil, fmt.Errorf("unknown NetBox assignment state: %d", state)
 	}
-	// Preserve the saved ID when the device is still free; the next reconcile
-	// will use a fresh ETag rather than selecting a different device.
-	return nil, errors.New("NetBox device changed during assignment; retry on the next reconciliation")
 }
 
-func (c *NetBoxClient) netBoxAssignmentForDevice(namespace string, device netboxclient.Device, bareMetalInstanceID string) (*Host, bool, error) {
-	owner, claimable, err := netBoxDeviceAssignmentState(device)
-	if err != nil {
-		return nil, false, err
-	}
-	if claimable || owner != bareMetalInstanceID {
-		return nil, claimable, nil
-	}
-	host := c.netBoxHostFromDevice(namespace, device)
-	host.BareMetalInstanceID = owner
-	return host, false, nil
-}
-
-func netBoxDeviceAssignmentState(device netboxclient.Device) (string, bool, error) {
+func classifyNetBoxAssignment(device netboxclient.Device, bareMetalInstanceID string) (netBoxAssignmentState, error) {
 	owner, err := netBoxInstanceOwner(device)
 	if err != nil {
-		return "", false, err
+		return netBoxAssignmentUnspecified, err
 	}
 	if device.Status == "" {
-		return "", false, errors.New("NetBox device has no status")
+		return netBoxAssignmentUnspecified, errors.New("NetBox device has no status")
 	}
 	if owner == "" {
 		if device.Status == netBoxStatusActive {
-			return "", false, errors.New("NetBox device is active without an assigned instance")
+			return netBoxAssignmentUnspecified, errors.New("NetBox device is active without an assigned instance")
 		}
-		return owner, device.Status == netBoxStatusStaged, nil
+		if device.Status == netBoxStatusStaged {
+			return netBoxAssignmentReadyToClaim, nil
+		}
+		return netBoxAssignmentUnavailable, nil
 	}
 	if device.Status != netBoxStatusActive {
-		return "", false, errors.New("NetBox device has an assigned instance but is not active")
+		return netBoxAssignmentUnspecified, errors.New("NetBox device has an assigned instance but is not active")
 	}
-	return owner, false, nil
+	if owner == bareMetalInstanceID {
+		return netBoxAssignmentOwnedByThisInstance, nil
+	}
+	return netBoxAssignmentOwnedByAnotherInstance, nil
+}
+
+func (c *NetBoxClient) netBoxAssignedHost(namespace string, device netboxclient.Device, bareMetalInstanceID string) *Host {
+	host := c.netBoxHostFromDevice(namespace, device)
+	host.BareMetalInstanceID = bareMetalInstanceID
+	return host
 }
 
 func netBoxInstanceOwner(device netboxclient.Device) (string, error) {
