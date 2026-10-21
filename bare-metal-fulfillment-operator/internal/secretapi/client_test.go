@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/google/cel-go/cel"
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
 	privatev1 "github.com/osac-project/osac/proto/gen/osac/private/v1"
@@ -58,6 +59,35 @@ func (f *fakeSecretsRPC) Get(
 	f.getRequest = request
 	return f.getResponse, f.getError
 }
+
+var _ = Describe("Secret API CEL filters", func() {
+	It("builds valid CEL for a tenant and escaped label key", func() {
+		labelKey := `device"42\segment`
+		got := FilterByTenantAndLabel("system", labelKey)
+
+		Expect(got).To(Equal(
+			`this.metadata.tenant == "system" && "device\"42\\segment" in this.metadata.labels`,
+		))
+
+		env, err := cel.NewEnv(cel.Variable("this", cel.DynType))
+		Expect(err).NotTo(HaveOccurred())
+		ast, issues := env.Compile(got)
+		Expect(issues).To(BeNil())
+		program, err := env.Program(ast)
+		Expect(err).NotTo(HaveOccurred())
+
+		result, _, err := program.Eval(map[string]interface{}{
+			"this": map[string]interface{}{
+				"metadata": map[string]interface{}{
+					"tenant": "system",
+					"labels": map[string]interface{}{labelKey: ""},
+				},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.Value()).To(BeTrue())
+	})
+})
 
 var _ = Describe("Secret API client", func() {
 	Describe("OAuth token source", func() {

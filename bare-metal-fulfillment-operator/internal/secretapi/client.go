@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -192,6 +193,19 @@ func newConnection(endpoint string, tlsConfig *tls.Config, tokenSource oauth2.To
 		return nil, fmt.Errorf("failed to create Secret API gRPC client: %w", err)
 	}
 	return conn, nil
+}
+
+// FilterByTenantAndLabel returns CEL for a tenant and label key.
+func FilterByTenantAndLabel(tenant, labelKey string) string {
+	return tenantFilter(tenant) + " && " + labelExistsFilter(labelKey)
+}
+
+func tenantFilter(tenant string) string {
+	return "this.metadata.tenant == " + strconv.Quote(tenant)
+}
+
+func labelExistsFilter(key string) string {
+	return strconv.Quote(key) + " in this.metadata.labels"
 }
 
 // List returns matching Secret metadata. Secret data is available only from
