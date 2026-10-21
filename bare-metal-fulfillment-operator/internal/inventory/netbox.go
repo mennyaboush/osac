@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
@@ -175,13 +176,18 @@ func (c *NetBoxClient) netBoxHostFromDevice(namespace string, device netboxclien
 }
 
 func buildFreeHostQuery(selector map[string]string) netboxclient.DeviceQuery {
-	query := make(netboxclient.DeviceQuery, len(selector)+3)
+	capabilityFilters := make(netboxclient.DeviceQuery, len(selector))
 	for key, value := range selector {
-		query["cf_"+key] = value
+		capabilityFilters["cf_"+key] = value
 	}
-	query["status"] = netBoxStatusStaged
-	query["cf_osac_managed"] = "true"
-	query["cf_osac_instance_id__empty"] = "true"
+	commonSelectors := netboxclient.DeviceQuery{
+		"status":                     netBoxStatusStaged,
+		"cf_osac_managed":            "true",
+		"cf_osac_instance_id__empty": "true",
+	}
+	query := make(netboxclient.DeviceQuery, len(capabilityFilters)+len(commonSelectors))
+	maps.Copy(query, capabilityFilters)
+	maps.Copy(query, commonSelectors)
 	return query
 }
 
