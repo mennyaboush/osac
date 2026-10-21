@@ -497,7 +497,7 @@ func netBoxStringField(fields map[string]interface{}, key string) (string, bool)
 }
 
 func (r *NetBoxCredentialResolver) getDeviceSecret(ctx context.Context, labelKey string) (secretapi.Secret, error) {
-	filter := fmt.Sprintf(`this.metadata.tenant == "system" && %q in this.metadata.labels`, labelKey)
+	filter := secretapi.FilterByTenantAndLabel("system", labelKey)
 	result, err := r.secrets.List(ctx, filter, secretListLimit)
 	if err != nil {
 		return secretapi.Secret{}, fmt.Errorf("failed to list OSAC Secrets for NetBox device: %w", err)
