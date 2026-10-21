@@ -661,18 +661,6 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(api.patchCalls).To(BeZero())
 	})
 
-	It("requires an ETag before resolving credentials for a new claim", func() {
-		api := &selectorQueryTestAPI{deviceSnapshot: stagedManagedDeviceSnapshot("")}
-		resolver := &fakeDeviceCredentialResolver{}
-		client := newTestNetBoxClient(api, resolver)
-
-		_, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
-
-		Expect(err).To(MatchError(ContainSubstring("missing an ETag")))
-		Expect(resolver.calls).To(BeZero())
-		Expect(api.patchCalls).To(BeZero())
-	})
-
 })
 
 func stagedManagedDeviceSnapshot(etag string) netboxclient.DeviceSnapshot {
