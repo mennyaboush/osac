@@ -472,6 +472,11 @@ func setupBareMetalInstanceController(
 	if err != nil {
 		return err
 	}
+	context.AfterFunc(ctx, func() {
+		if closeErr := inventoryClient.Close(); closeErr != nil {
+			setupLog.Error(closeErr, "Failed to close inventory client")
+		}
+	})
 	managementClient, err := management.NewClient(ctx, &managementConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create management client: %w", err)
@@ -601,15 +606,10 @@ func createNetBoxInventoryClientWithManager(
 	setupLog.Info("BMH manager configured", "namespace", bmhManager.Namespace())
 
 	netBoxClient := inventory.NewNetBoxClient(netBoxAPI, bmhManager, inventoryCfg.HostClass, secretsClient)
-	context.AfterFunc(ctx, func() {
-		if closeErr := netBoxClient.Close(); closeErr != nil {
-			setupLog.Error(closeErr, "Failed to close NetBox inventory client")
-		}
-	})
 	return netBoxClient, nil
 }
 
-func createSecretAPIClientFromEnv() (*secretapi.Client, error) {
+func createSecretAPIClientFromEnv() (inventory.SecretAPIClient, error) {
 	return secretapi.New(secretapi.Config{
 		Endpoint:         os.Getenv(envSecretAPIURL),
 		IssuerURL:        os.Getenv(envSecretAPIIssuerURL),

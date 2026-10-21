@@ -57,6 +57,13 @@ type NetBoxAPI interface {
 	PatchDevice(ctx context.Context, id string, patch netboxclient.DevicePatch, etag string) (netboxclient.DeviceSnapshot, error)
 }
 
+// SecretAPIClient defines the Secret API operations used by the NetBox inventory.
+type SecretAPIClient interface {
+	List(ctx context.Context, filter string, limit int32) (secretapi.ListResult, error)
+	Get(ctx context.Context, id string) (secretapi.Secret, error)
+	Close() error
+}
+
 // NetBoxClientConfig contains the mounted-file and endpoint settings for NetBox.
 type NetBoxClientConfig struct {
 	URL               string `json:"url"`
@@ -96,7 +103,7 @@ type NetBoxClient struct {
 	api        NetBoxAPI
 	bmhManager baremetalhost.BMHLifecycleManager
 	hostClass  string
-	secretAPI  *secretapi.Client
+	secretAPI  SecretAPIClient
 }
 
 var (
@@ -126,7 +133,7 @@ func NewNetBoxAPI(config *Config) (NetBoxAPI, error) {
 }
 
 // NewNetBoxClient creates a NetBox inventory client with injected dependencies.
-func NewNetBoxClient(api NetBoxAPI, bmhManager baremetalhost.BMHLifecycleManager, hostClass string, secretAPI *secretapi.Client) *NetBoxClient {
+func NewNetBoxClient(api NetBoxAPI, bmhManager baremetalhost.BMHLifecycleManager, hostClass string, secretAPI SecretAPIClient) *NetBoxClient {
 	return &NetBoxClient{
 		api:        api,
 		bmhManager: bmhManager,
@@ -135,7 +142,7 @@ func NewNetBoxClient(api NetBoxAPI, bmhManager baremetalhost.BMHLifecycleManager
 	}
 }
 
-// Close releases connections owned by the inventory client.
+// Close releases the Secret API connection used by the NetBox client.
 func (c *NetBoxClient) Close() error {
 	if c == nil || c.secretAPI == nil {
 		return nil
