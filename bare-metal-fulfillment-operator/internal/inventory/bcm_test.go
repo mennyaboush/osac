@@ -337,7 +337,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 					}),
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(verifiedDevice, nil),
 			)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, params baremetalhost.CreateParams) error {
@@ -366,7 +366,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 		It("should skip write but still create BMH when osac_instance_id already matches", func(ctx context.Context) {
 			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","bmcSettings":{"userName":"root","password":"calvin"},"extra_values":{"resource_class":"h100","osac_instance_id":"bmi-123","osac_bmc_address":"ipmi://10.0.0.1"}}`)
 			mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
@@ -457,7 +457,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 					}),
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(verifiedDevice, nil),
 			)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
@@ -609,7 +609,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 				mockAPI.EXPECT().UpdateDevice(gomock.Any(), gomock.Any()).Return(&bcmclient.UpdateResponse{Success: true}, nil),
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(verifiedDevice, nil),
 			)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(fmt.Errorf("failed to create BMH: conflict"))
 
 			client := NewBCMClient(mockAPI, bmhMgr, "bcm")
@@ -632,7 +632,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			mockDisc.EXPECT().DiscoverSystemPath(gomock.Any(), "10.141.0.1", "aa:bb:cc:dd:ee:01", "root", "calvin").
 				Return("/redfish/v1/Systems/1", nil)
 			mockAPI.EXPECT().UpdateDevice(gomock.Any(), gomock.Any()).Return(&bcmclient.UpdateResponse{Success: true}, nil)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, params baremetalhost.CreateParams) error {
@@ -657,7 +657,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 				mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(verifiedDevice, nil),
 			)
 			mockAPI.EXPECT().UpdateDevice(gomock.Any(), gomock.Any()).Return(&bcmclient.UpdateResponse{Success: true}, nil)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, params baremetalhost.CreateParams) error {
@@ -690,7 +690,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 					Expect(ev).To(HaveKeyWithValue("osac_instance_id", "bmi-123"), "cache update must preserve osac_instance_id")
 					return &bcmclient.UpdateResponse{Success: true}, nil
 				})
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
@@ -736,7 +736,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 		It("should create the Secret from device bmcSettings when no admin Secret is set", func(ctx context.Context) {
 			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","bmcSettings":{"userName":"root","password":"calvin","userID":2},"extra_values":{"resource_class":"h100","osac_instance_id":"bmi-123","osac_bmc_address":"ipmi://10.0.0.1"}}`)
 			mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).DoAndReturn(
 				func(_ context.Context, params baremetalhost.CreateParams) error {
@@ -756,7 +756,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			mockAPI.EXPECT().GetCategories(gomock.Any()).Return([]bcmclient.Category{
 				{UUID: "cat-uuid", Name: "default", BMCSettings: &bcmclient.BMCSettings{UserName: "bright", Password: "wSXp5sQq"}},
 			}, nil)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "bright", "wSXp5sQq").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "bright", "wSXp5sQq", nil).Return(nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
@@ -772,7 +772,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			mockAPI.EXPECT().GetPartitions(gomock.Any()).Return([]bcmclient.Partition{
 				{UUID: "part-uuid", Name: "base", BMCSettings: &bcmclient.BMCSettings{UserName: "part-user", Password: "part-pass"}},
 			}, nil)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "part-user", "part-pass").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "part-user", "part-pass", nil).Return(nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
@@ -805,7 +805,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 		It("should return Host with Ready=false when the BareMetalHost is not ready", func(ctx context.Context) {
 			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","bmcSettings":{"userName":"root","password":"calvin"},"extra_values":{"resource_class":"h100","osac_instance_id":"bmi-123","osac_bmc_address":"ipmi://10.0.0.1"}}`)
 			mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(false, nil)
 
@@ -819,7 +819,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 		It("should return Host with Ready=true when the BareMetalHost is ready", func(ctx context.Context) {
 			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","bmcSettings":{"userName":"root","password":"calvin"},"extra_values":{"resource_class":"h100","osac_instance_id":"bmi-123","osac_bmc_address":"ipmi://10.0.0.1"}}`)
 			mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(true, nil)
 
@@ -833,7 +833,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 		It("should surface an error when the BareMetalHost is in an error state", func(ctx context.Context) {
 			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","bmcSettings":{"userName":"root","password":"calvin"},"extra_values":{"resource_class":"h100","osac_instance_id":"bmi-123","osac_bmc_address":"ipmi://10.0.0.1"}}`)
 			mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil)
-			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin").Return(nil)
+			bmhMgr.EXPECT().EnsureBMCSecret(gomock.Any(), "node001-bmc-secret", "root", "calvin", nil).Return(nil)
 			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
 			bmhMgr.EXPECT().IsBMHReady(gomock.Any(), "node001").Return(false, fmt.Errorf("BareMetalHost in error state"))
 

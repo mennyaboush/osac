@@ -337,7 +337,6 @@ func (r *BareMetalInstanceReconciler) reconcileInventory(ctx context.Context, ba
 	if poolID, ok := bareMetalInstance.GetPoolID(); ok {
 		combinedLabels[shared.OsacBareMetalPoolIDLabel] = poolID
 	}
-
 	inventoryHost, err := r.InventoryClient.AssignHost(
 		ctx,
 		bareMetalInstance.Spec.ExternalHostID,

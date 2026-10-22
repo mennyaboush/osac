@@ -23,6 +23,7 @@ package baremetalhost
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 
 	metal3api "github.com/metal3-io/baremetal-operator/apis/metal3.io/v1alpha1"
@@ -53,6 +54,19 @@ type CreateParams struct {
 	DisableCertificateVerification bool
 	ConsumerRef                    *corev1.ObjectReference
 	Labels                         map[string]string
+	Annotations                    map[string]string
+}
+
+func validateResourceOwnership(actual, expected map[string]string) error {
+	if expected == nil {
+		return nil
+	}
+	for _, key := range []string{shared.OsacTenantAnnotation, shared.OsacOwnerReferenceAnnotation} {
+		if expected[key] == "" || actual[key] != expected[key] {
+			return fmt.Errorf("resource ownership annotations do not match")
+		}
+	}
+	return nil
 }
 
 // Manager handles on-demand BareMetalHost CR creation, deletion, and
@@ -97,9 +111,10 @@ func (m *Manager) CreateBMH(ctx context.Context, params CreateParams) error {
 
 	bmh := &metal3api.BareMetalHost{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      params.Name,
-			Namespace: m.namespace,
-			Labels:    params.Labels,
+			Name:        params.Name,
+			Namespace:   m.namespace,
+			Labels:      params.Labels,
+			Annotations: maps.Clone(params.Annotations),
 		},
 		Spec: metal3api.BareMetalHostSpec{
 			BMC: metal3api.BMCDetails{
@@ -129,6 +144,9 @@ func (m *Manager) CreateBMH(ctx context.Context, params CreateParams) error {
 	}
 
 	if existing.Spec.ConsumerRef == nil && params.ConsumerRef == nil {
+		if err := validateResourceOwnership(existing.Annotations, params.Annotations); err != nil {
+			return fmt.Errorf("BareMetalHost %s/%s ownership mismatch: %w", m.namespace, params.Name, err)
+		}
 		log.Info("BareMetalHost already exists with no consumerRef", "name", params.Name)
 		return nil
 	}
@@ -138,6 +156,9 @@ func (m *Manager) CreateBMH(ctx context.Context, params CreateParams) error {
 		existing.Spec.ConsumerRef.Kind == params.ConsumerRef.Kind &&
 		existing.Spec.ConsumerRef.Name == params.ConsumerRef.Name &&
 		existing.Spec.ConsumerRef.Namespace == params.ConsumerRef.Namespace {
+		if err := validateResourceOwnership(existing.Annotations, params.Annotations); err != nil {
+			return fmt.Errorf("BareMetalHost %s/%s ownership mismatch: %w", m.namespace, params.Name, err)
+		}
 		log.Info("BareMetalHost already exists with matching consumerRef", "name", params.Name)
 		return nil
 	}
@@ -163,7 +184,7 @@ func (m *Manager) BMHExists(ctx context.Context, name string) (bool, error) {
 // "password" keys. The Secret is labeled so DeleteBMCSecret can safely tell
 // operator-created Secrets apart from admin-created ones. Idempotent: if the
 // Secret already exists its data and label are updated.
-func (m *Manager) EnsureBMCSecret(ctx context.Context, name, username, password string) error {
+func (m *Manager) EnsureBMCSecret(ctx context.Context, name, username, password string, annotations map[string]string) error {
 	log := ctrllog.FromContext(ctx)
 
 	secret := &corev1.Secret{
@@ -175,13 +196,26 @@ func (m *Manager) EnsureBMCSecret(ctx context.Context, name, username, password 
 		// cause DeleteBMCSecret to delete it, violating the "never touch
 		// non-operator Secrets" invariant. A non-empty ResourceVersion means the
 		// Secret already existed (update path).
-		if secret.ResourceVersion != "" && secret.Labels[bmcSecretManagedByLabel] != bmcSecretManagedByValue {
-			return fmt.Errorf("BMC credentials Secret %s/%s already exists and is not operator-managed; refusing to overwrite", m.namespace, name)
+		if secret.ResourceVersion != "" {
+			if secret.Labels[bmcSecretManagedByLabel] != bmcSecretManagedByValue {
+				return fmt.Errorf("BMC credentials Secret %s/%s already exists and is not operator-managed; refusing to overwrite", m.namespace, name)
+			}
+			if err := validateResourceOwnership(secret.Annotations, annotations); err != nil {
+				return fmt.Errorf("BMC credentials Secret %s/%s ownership mismatch: %w", m.namespace, name, err)
+			}
 		}
 		if secret.Labels == nil {
 			secret.Labels = map[string]string{}
 		}
 		secret.Labels[bmcSecretManagedByLabel] = bmcSecretManagedByValue
+		if annotations != nil {
+			if secret.Annotations == nil {
+				secret.Annotations = map[string]string{}
+			}
+			for key, value := range annotations {
+				secret.Annotations[key] = value
+			}
+		}
 		secret.Type = corev1.SecretTypeOpaque
 		secret.Data = map[string][]byte{
 			"username": []byte(username),

@@ -489,7 +489,7 @@ func (c *BCMClient) ensureBMHExists(ctx context.Context, device *bcmclient.Devic
 
 	// Secret name is derived from the BMH so the two stay coupled.
 	secretName := bmhName + bmcSecretSuffix
-	if err := c.bmhManager.EnsureBMCSecret(ctx, secretName, username, password); err != nil {
+	if err := c.bmhManager.EnsureBMCSecret(ctx, secretName, username, password, nil); err != nil {
 		return fmt.Errorf("failed to create BMC credentials Secret for host %q: %w", device.Hostname, err)
 	}
 

@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
@@ -278,22 +279,63 @@ func (c *NetBoxClient) assignNetBoxDevice(ctx context.Context, namespace, device
 	}
 	switch state {
 	case netBoxAssignmentReadyToClaim:
-		// OSAC-5952 will use the resolved credentials when preparing the Metal3 host.
-		if _, err := c.credentialResolver.Resolve(ctx, snapshot.Device); err != nil {
+		credentials, err := c.credentialResolver.Resolve(ctx, snapshot.Device)
+		if err != nil {
 			if errors.Is(err, ErrCredentialResolutionFailed) {
 				ctrllog.FromContext(ctx).Error(err, "NetBox device credentials are invalid; quarantining device", "deviceID", deviceID)
 				return c.markNetBoxDeviceFailed(ctx, deviceID, snapshot.ETag, credentialFailureMessage(err))
 			}
 			return nil, fmt.Errorf("failed to resolve NetBox BMC credentials: %w", err)
 		}
-		return c.claimNetBoxDevice(ctx, namespace, deviceID, bareMetalInstanceID, snapshot.ETag)
+		host, err := c.claimNetBoxDevice(ctx, namespace, deviceID, bareMetalInstanceID, snapshot.ETag)
+		if err != nil || host == nil {
+			return host, err
+		}
+		return c.prepareMetal3Host(ctx, host, credentials, bareMetalInstanceID)
 	case netBoxAssignmentOwnedByThisInstance:
-		return c.netBoxAssignedHost(namespace, snapshot.Device, bareMetalInstanceID), nil
+		credentials, err := c.credentialResolver.Resolve(ctx, snapshot.Device)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve NetBox BMC credentials: %w", err)
+		}
+		host := c.netBoxAssignedHost(namespace, snapshot.Device, bareMetalInstanceID)
+		return c.prepareMetal3Host(ctx, host, credentials, bareMetalInstanceID)
 	case netBoxAssignmentOwnedByAnotherInstance, netBoxAssignmentUnavailable:
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("unknown NetBox assignment state: %d", state)
 	}
+}
+
+func (c *NetBoxClient) prepareMetal3Host(ctx context.Context, host *Host, credentials *NetBoxCredentials, bareMetalInstanceID string) (*Host, error) {
+	secretName := host.Name + bmcSecretSuffix
+	if err := c.bmhManager.EnsureBMCSecret(ctx, secretName, string(credentials.Username), string(credentials.Password), nil); err != nil {
+		return nil, fmt.Errorf("failed to ensure BMC credentials Secret for NetBox host: %w", err)
+	}
+
+	params := baremetalhost.CreateParams{
+		Name:              host.Name,
+		BMCAddress:        credentials.BMCAddress,
+		CredentialsSecret: secretName,
+		BootMACAddress:    credentials.BootMACAddress,
+		ConsumerRef: &corev1.ObjectReference{
+			APIVersion: "osac.openshift.io/v1alpha1",
+			Kind:       "BareMetalInstance",
+			Name:       bareMetalInstanceID,
+		},
+		Labels: map[string]string{
+			Metal3ManagedByLabel: shared.OsacDefaultManagedByValue,
+		},
+	}
+	if err := c.bmhManager.CreateBMH(ctx, params); err != nil {
+		return nil, fmt.Errorf("failed to create BareMetalHost for NetBox host: %w", err)
+	}
+
+	ready, err := c.bmhManager.IsBMHReady(ctx, host.Name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check BareMetalHost readiness for NetBox host: %w", err)
+	}
+	host.Ready = ready
+	return host, nil
 }
 
 func credentialFailureMessage(err error) string {
@@ -591,7 +633,7 @@ func uniqueDeviceSecretID(result secretapi.ListResult, labelKey string) (string,
 	if result.Total > 1 {
 		return "", errAmbiguousNetBoxSecret
 	}
-	if result.Total != 1 || len(result.Items) != 1 {
+	if result.Total <= 0 || len(result.Items) != 1 {
 		return "", errors.New("inconsistent OSAC Secret list response for NetBox device")
 	}
 	secret := result.Items[0]
