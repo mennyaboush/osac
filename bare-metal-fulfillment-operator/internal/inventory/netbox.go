@@ -308,7 +308,7 @@ func (c *NetBoxClient) assignNetBoxDevice(ctx context.Context, namespace, device
 
 func (c *NetBoxClient) prepareMetal3Host(ctx context.Context, host *Host, credentials *NetBoxCredentials, bareMetalInstanceID string) (*Host, error) {
 	secretName := host.Name + bmcSecretSuffix
-	if err := c.bmhManager.EnsureBMCSecret(ctx, secretName, string(credentials.Username), string(credentials.Password), nil); err != nil {
+	if err := c.bmhManager.EnsureBMCSecret(ctx, secretName, string(credentials.Username), string(credentials.Password)); err != nil {
 		return nil, fmt.Errorf("failed to ensure BMC credentials Secret for NetBox host: %w", err)
 	}
 

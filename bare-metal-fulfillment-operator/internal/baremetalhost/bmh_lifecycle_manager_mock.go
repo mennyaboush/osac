@@ -98,17 +98,17 @@ func (mr *MockBMHLifecycleManagerMockRecorder) DeleteBMH(ctx, name any) *gomock.
 }
 
 // EnsureBMCSecret mocks base method.
-func (m *MockBMHLifecycleManager) EnsureBMCSecret(ctx context.Context, name, username, password string, annotations map[string]string) error {
+func (m *MockBMHLifecycleManager) EnsureBMCSecret(ctx context.Context, name, username, password string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "EnsureBMCSecret", ctx, name, username, password, annotations)
+	ret := m.ctrl.Call(m, "EnsureBMCSecret", ctx, name, username, password)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // EnsureBMCSecret indicates an expected call of EnsureBMCSecret.
-func (mr *MockBMHLifecycleManagerMockRecorder) EnsureBMCSecret(ctx, name, username, password, annotations any) *gomock.Call {
+func (mr *MockBMHLifecycleManagerMockRecorder) EnsureBMCSecret(ctx, name, username, password any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureBMCSecret", reflect.TypeOf((*MockBMHLifecycleManager)(nil).EnsureBMCSecret), ctx, name, username, password, annotations)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EnsureBMCSecret", reflect.TypeOf((*MockBMHLifecycleManager)(nil).EnsureBMCSecret), ctx, name, username, password)
 }
 
 // GetHardwareNICs mocks base method.

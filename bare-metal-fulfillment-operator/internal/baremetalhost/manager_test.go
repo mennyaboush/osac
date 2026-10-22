@@ -27,18 +27,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/shared"
 )
 
 const testNamespace = "osac-baremetal"
-
-func testResourceAnnotations() map[string]string {
-	return map[string]string{
-		shared.OsacTenantAnnotation:         "tenant-a",
-		shared.OsacOwnerReferenceAnnotation: "test-instance-uid",
-	}
-}
 
 func newTestScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
@@ -73,7 +64,6 @@ var _ = Describe("BareMetalHost Manager", func() {
 	Describe("CreateBMH", func() {
 		It("should create a new BMH", func() {
 			mgr := newTestManager()
-			annotations := testResourceAnnotations()
 
 			err := mgr.CreateBMH(ctx, CreateParams{
 				Name:              "node001",
@@ -85,8 +75,7 @@ var _ = Describe("BareMetalHost Manager", func() {
 					Kind:       "BareMetalInstance",
 					Name:       "test-instance-uid",
 				},
-				Labels:      map[string]string{"osac.openshift.io/pool-id": "pool1"},
-				Annotations: annotations,
+				Labels: map[string]string{"osac.openshift.io/pool-id": "pool1"},
 			})
 			Expect(err).NotTo(HaveOccurred())
 
@@ -102,16 +91,14 @@ var _ = Describe("BareMetalHost Manager", func() {
 			Expect(bmh.Spec.ConsumerRef).NotTo(BeNil())
 			Expect(bmh.Spec.ConsumerRef.Name).To(Equal("test-instance-uid"))
 			Expect(bmh.Labels["osac.openshift.io/pool-id"]).To(Equal("pool1"))
-			Expect(bmh.Annotations).To(Equal(annotations))
 			Expect(bmh.OwnerReferences).To(BeEmpty())
 		})
 
 		It("should be idempotent with matching consumerRef", func() {
 			existing := &metal3api.BareMetalHost{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:        "node001",
-					Namespace:   testNamespace,
-					Annotations: testResourceAnnotations(),
+					Name:      "node001",
+					Namespace: testNamespace,
 				},
 				Spec: metal3api.BareMetalHostSpec{
 					ConsumerRef: &corev1.ObjectReference{
@@ -130,54 +117,9 @@ var _ = Describe("BareMetalHost Manager", func() {
 					Kind:       "BareMetalInstance",
 					Name:       "test-instance-uid",
 				},
-				Annotations: testResourceAnnotations(),
 			})
 			Expect(err).NotTo(HaveOccurred())
 		})
-
-		DescribeTable("refuses a matching consumerRef with missing or foreign ownership annotations",
-			func(actualAnnotations map[string]string) {
-				existing := &metal3api.BareMetalHost{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:        "node001",
-						Namespace:   testNamespace,
-						Annotations: actualAnnotations,
-					},
-					Spec: metal3api.BareMetalHostSpec{
-						ConsumerRef: &corev1.ObjectReference{
-							APIVersion: "osac.openshift.io/v1alpha1",
-							Kind:       "BareMetalInstance",
-							Name:       "test-instance-uid",
-						},
-					},
-				}
-				mgr := newTestManager(existing)
-				before := &metal3api.BareMetalHost{}
-				Expect(mgr.client.Get(ctx, client.ObjectKeyFromObject(existing), before)).To(Succeed())
-
-				err := mgr.CreateBMH(ctx, CreateParams{
-					Name: "node001",
-					ConsumerRef: &corev1.ObjectReference{
-						APIVersion: "osac.openshift.io/v1alpha1",
-						Kind:       "BareMetalInstance",
-						Name:       "test-instance-uid",
-					},
-					Annotations: testResourceAnnotations(),
-				})
-
-				Expect(err).To(MatchError(ContainSubstring("ownership mismatch")))
-				Expect(err.Error()).NotTo(ContainSubstring("tenant-a"))
-				Expect(err.Error()).NotTo(ContainSubstring("test-instance-uid"))
-				after := &metal3api.BareMetalHost{}
-				Expect(mgr.client.Get(ctx, client.ObjectKeyFromObject(existing), after)).To(Succeed())
-				Expect(after).To(Equal(before))
-			},
-			Entry("ownerless", nil),
-			Entry("owned by another instance", map[string]string{
-				shared.OsacTenantAnnotation:         "tenant-a",
-				shared.OsacOwnerReferenceAnnotation: "bmi-other",
-			}),
-		)
 
 		It("should return error with different consumerRef", func() {
 			existing := &metal3api.BareMetalHost{
@@ -478,72 +420,35 @@ var _ = Describe("BareMetalHost Manager", func() {
 		It("should create a labeled Secret with username and password", func() {
 			mgr := newTestManager()
 
-			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "s3cret", testResourceAnnotations())).To(Succeed())
+			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "s3cret")).To(Succeed())
 
 			secret := &corev1.Secret{}
 			Expect(mgr.client.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: "node001-bmc-secret"}, secret)).To(Succeed())
 			Expect(string(secret.Data["username"])).To(Equal("admin"))
 			Expect(string(secret.Data["password"])).To(Equal("s3cret"))
 			Expect(secret.Labels).To(HaveKeyWithValue(bmcSecretManagedByLabel, bmcSecretManagedByValue))
-			Expect(secret.Annotations).To(Equal(testResourceAnnotations()))
 			Expect(secret.OwnerReferences).To(BeEmpty())
 		})
 
-		It("should update same-owner credentials and preserve unrelated annotations", func() {
-			annotations := testResourceAnnotations()
-			annotations["example.com/keep"] = "value"
-			foreignPreserving := &corev1.Secret{
+		It("should update existing operator-managed credentials and preserve annotations", func() {
+			annotations := map[string]string{"example.com/keep": "value"}
+			existing := &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "node001-bmc-secret",
-					Namespace: testNamespace,
-					Labels:    map[string]string{bmcSecretManagedByLabel: bmcSecretManagedByValue},
-					Annotations: map[string]string{
-						shared.OsacTenantAnnotation:         "tenant-a",
-						shared.OsacOwnerReferenceAnnotation: "test-instance-uid",
-						"example.com/keep":                  "value",
-					},
+					Name:        "node001-bmc-secret",
+					Namespace:   testNamespace,
+					Labels:      map[string]string{bmcSecretManagedByLabel: bmcSecretManagedByValue},
+					Annotations: annotations,
 				},
 				Data: map[string][]byte{"username": []byte("admin"), "password": []byte("old")},
 			}
-			mgr := newTestManager(foreignPreserving)
-			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "new", testResourceAnnotations())).To(Succeed())
+			mgr := newTestManager(existing)
+			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "new")).To(Succeed())
 
 			secret := &corev1.Secret{}
 			Expect(mgr.client.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: "node001-bmc-secret"}, secret)).To(Succeed())
 			Expect(string(secret.Data["password"])).To(Equal("new"))
 			Expect(secret.Annotations).To(Equal(annotations))
 		})
-
-		DescribeTable("should refuse an existing operator-managed Secret with missing or foreign ownership annotations",
-			func(actualAnnotations map[string]string) {
-				original := &corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:        "node001-bmc-secret",
-						Namespace:   testNamespace,
-						Labels:      map[string]string{bmcSecretManagedByLabel: bmcSecretManagedByValue},
-						Annotations: actualAnnotations,
-					},
-					Data: map[string][]byte{"username": []byte("existing-user"), "password": []byte("existing-password")},
-				}
-				mgr := newTestManager(original)
-				before := &corev1.Secret{}
-				Expect(mgr.client.Get(ctx, client.ObjectKeyFromObject(original), before)).To(Succeed())
-
-				err := mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "replacement", testResourceAnnotations())
-
-				Expect(err).To(MatchError(ContainSubstring("ownership mismatch")))
-				Expect(err.Error()).NotTo(ContainSubstring("tenant-a"))
-				Expect(err.Error()).NotTo(ContainSubstring("test-instance-uid"))
-				after := &corev1.Secret{}
-				Expect(mgr.client.Get(ctx, client.ObjectKeyFromObject(original), after)).To(Succeed())
-				Expect(after).To(Equal(before))
-			},
-			Entry("ownerless", map[string]string{shared.OsacTenantAnnotation: "tenant-a"}),
-			Entry("owned by another instance", map[string]string{
-				shared.OsacTenantAnnotation:         "tenant-a",
-				shared.OsacOwnerReferenceAnnotation: "bmi-other",
-			}),
-		)
 
 		It("should refuse to overwrite a pre-existing Secret it does not own", func() {
 			foreign := &corev1.Secret{
@@ -555,7 +460,7 @@ var _ = Describe("BareMetalHost Manager", func() {
 			}
 			mgr := newTestManager(foreign)
 
-			err := mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "s3cret", nil)
+			err := mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "s3cret")
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("not operator-managed"))
 
@@ -570,7 +475,7 @@ var _ = Describe("BareMetalHost Manager", func() {
 	Describe("DeleteBMCSecret", func() {
 		It("should delete an operator-managed Secret", func() {
 			mgr := newTestManager()
-			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "s3cret", nil)).To(Succeed())
+			Expect(mgr.EnsureBMCSecret(ctx, "node001-bmc-secret", "admin", "s3cret")).To(Succeed())
 
 			Expect(mgr.DeleteBMCSecret(ctx, "node001-bmc-secret")).To(Succeed())
 

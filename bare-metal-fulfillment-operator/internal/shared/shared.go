@@ -21,9 +21,6 @@ const (
 	// OsacPrefix is the prefix used to identify osac resources
 	OsacPrefix string = "osac.openshift.io"
 
-	OsacTenantAnnotation         = OsacPrefix + "/tenant"
-	OsacOwnerReferenceAnnotation = OsacPrefix + "/owner-reference"
-
 	OsacNoopTemplate = "noop"
 
 	OsacBareMetalPoolIDLabel = "bareMetalPoolId"
