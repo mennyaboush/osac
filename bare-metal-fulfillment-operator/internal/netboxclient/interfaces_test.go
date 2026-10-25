@@ -18,6 +18,7 @@ package netboxclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -573,7 +575,74 @@ var _ = Describe("NetBox device interface listing", Label("OSAC-5953"), func() {
 		Expect(calls.Load()).To(Equal(int32(1)))
 		Expect(names).To(Equal([]string{"eno1", "veth0", "ens3"}))
 	})
+
+	It("HTTP-26 checks cancellation after a successful page response", func() {
+		_, client := newTrustedClient(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			Fail("request should use the controlled test transport")
+		}))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		body, err := json.Marshal(nativeInterfacePage(1, nil,
+			nativeInterfaceResponse(501, 42, "eno1", "AA:BB:CC:DD:EE:01", nil)))
+		Expect(err).NotTo(HaveOccurred())
+		var calls atomic.Int32
+		client.api.GetConfig().HTTPClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			calls.Add(1)
+			header := make(http.Header)
+			header.Set("Content-Type", "application/json")
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     header,
+				Body:       &cancelContextOnCloseBody{Reader: strings.NewReader(string(body)), cancel: cancel},
+				Request:    request,
+			}, nil
+		})}
+
+		var visited []string
+		err = client.ForEachDeviceInterface(ctx, "42", func(value DeviceInterface) (bool, error) {
+			visited = append(visited, value.ID)
+			return true, nil
+		})
+
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		Expect(visited).To(BeEmpty())
+		Expect(calls.Load()).To(Equal(int32(1)))
+	})
+
+	It("HTTP-27 checks cancellation between records on one page", func() {
+		var calls atomic.Int32
+		_, client := newTrustedClient(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			writeJSON(w, http.StatusOK, nativeInterfacePage(2, nil,
+				nativeInterfaceResponse(501, 42, "eno1", "AA:BB:CC:DD:EE:01", nil),
+				nativeInterfaceResponse(502, 42, "eno2", "AA:BB:CC:DD:EE:02", nil)))
+		}))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		var visited []string
+		err := client.ForEachDeviceInterface(ctx, "42", func(value DeviceInterface) (bool, error) {
+			visited = append(visited, value.ID)
+			cancel()
+			return true, nil
+		})
+
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		Expect(visited).To(Equal([]string{"501"}))
+		Expect(calls.Load()).To(Equal(int32(1)))
+	})
 })
+
+type cancelContextOnCloseBody struct {
+	io.Reader
+	cancel context.CancelFunc
+}
+
+func (body *cancelContextOnCloseBody) Close() error {
+	body.cancel()
+	return nil
+}
 
 func nativeInterfaceResponse(id, deviceID int, name, primaryMAC string, customFields map[string]any) map[string]any {
 	var primary any

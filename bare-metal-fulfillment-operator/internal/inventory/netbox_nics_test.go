@@ -778,6 +778,26 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 		Expect(macs).To(BeNil())
 		Expect(accepted).To(Equal([]string{"501"}))
 	})
+
+	It("LOG-30 discards the result when the interface walker returns success after cancellation", func() {
+		client, api := newNetBoxLogicalMACTestClient()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		api.interfaceList = func(_ context.Context, deviceID string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
+			iface := netboxInterfaceForTest("501", "data-0", "AA:BB:CC:DD:EE:01", nil)
+			iface.DeviceID = deviceID
+			keepGoing, err := visit(iface)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(keepGoing).To(BeTrue())
+			cancel()
+			return nil
+		}
+
+		macs, err := client.GetHostLogicalPortMACs(ctx, "baremetal/netbox-42")
+
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		Expect(macs).To(BeNil())
+	})
 })
 
 type nicReadTestAPI struct {
