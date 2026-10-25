@@ -48,10 +48,6 @@ type mockInventoryClient struct {
 	getHostLogicalPortMACsFunc func(ctx context.Context, inventoryHostID string) (map[string]string, error)
 }
 
-func (*mockInventoryClient) Close() error {
-	return nil
-}
-
 func (m *mockInventoryClient) FindFreeHost(ctx context.Context, matchExpressions map[string]string) (*inventory.Host, error) {
 	if m.findFreeHostFunc != nil {
 		return m.findFreeHostFunc(ctx, matchExpressions)

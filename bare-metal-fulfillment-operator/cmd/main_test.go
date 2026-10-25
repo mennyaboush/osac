@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -242,6 +243,8 @@ var _ = Describe("createInventoryClient", func() {
 		inventoryClient, err := createInventoryClient(context.Background(), inventoryCfg, managementCfg, mgr)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(inventoryClient).To(BeAssignableToTypeOf(&inventory.NetBoxClient{}))
-		Expect(inventoryClient.Close()).To(Succeed())
+		closer, ok := inventoryClient.(io.Closer)
+		Expect(ok).To(BeTrue())
+		Expect(closer.Close()).To(Succeed())
 	})
 })
