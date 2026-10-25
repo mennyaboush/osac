@@ -400,7 +400,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		api := &selectorQueryTestAPI{
 			deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, ""),
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
+		client := newTestNetBoxClientWithCredentials(api)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
