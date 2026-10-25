@@ -206,6 +206,14 @@ func (a *selectorQueryTestAPI) GetDevice(_ context.Context, id string) (netboxcl
 	return a.deviceSnapshot, nil
 }
 
+func (*selectorQueryTestAPI) ForEachDeviceInterface(
+	context.Context,
+	string,
+	func(netboxclient.DeviceInterface) (bool, error),
+) error {
+	return errors.New("unexpected interface listing")
+}
+
 func (a *selectorQueryTestAPI) PatchDevice(
 	_ context.Context,
 	id string,

@@ -52,6 +52,7 @@ var errNetBoxClientNotImplemented = errors.New("NetBox inventory client is not i
 // consumer-side interface.
 type NetBoxAPI interface {
 	ForEachDevice(ctx context.Context, query netboxclient.DeviceQuery, visit func(netboxclient.Device) (bool, error)) error
+	ForEachDeviceInterface(ctx context.Context, deviceID string, visit func(netboxclient.DeviceInterface) (bool, error)) error
 	ForEachDeviceCustomField(ctx context.Context, visit func(netboxclient.CustomField) (bool, error)) error
 	GetDevice(ctx context.Context, id string) (netboxclient.DeviceSnapshot, error)
 	PatchDevice(ctx context.Context, id string, patch netboxclient.DevicePatch, etag string) (netboxclient.DeviceSnapshot, error)
