@@ -59,7 +59,7 @@ type NetBoxAPI interface {
 
 // SecretAPIClient defines the Secret API operations used by the NetBox inventory.
 type SecretAPIClient interface {
-	List(ctx context.Context, filter string, limit int32) (secretapi.ListResult, error)
+	List(ctx context.Context, filter secretapi.Filter, limit int32) (secretapi.ListResult, error)
 	Get(ctx context.Context, id string) (secretapi.Secret, error)
 	Close() error
 }
