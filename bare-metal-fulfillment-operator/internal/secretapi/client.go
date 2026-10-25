@@ -51,6 +51,9 @@ type Config struct {
 	CAFile           string
 }
 
+// Filter is a CEL expression used to select Secrets.
+type Filter string
+
 // Secret is the generic data returned by the OSAC Secret API.
 type Secret struct {
 	ID     string
@@ -196,8 +199,8 @@ func newConnection(endpoint string, tlsConfig *tls.Config, tokenSource oauth2.To
 }
 
 // FilterByTenantAndLabel returns CEL for a tenant and label key.
-func FilterByTenantAndLabel(tenant, labelKey string) string {
-	return tenantFilter(tenant) + " && " + labelExistsFilter(labelKey)
+func FilterByTenantAndLabel(tenant, labelKey string) Filter {
+	return Filter(tenantFilter(tenant) + " && " + labelExistsFilter(labelKey))
 }
 
 func tenantFilter(tenant string) string {
@@ -210,14 +213,15 @@ func labelExistsFilter(key string) string {
 
 // List returns matching Secret metadata. Secret data is available only from
 // Get and is never copied from a List response.
-func (c *client) List(ctx context.Context, filter string, limit int32) (ListResult, error) {
-	if strings.TrimSpace(filter) == "" {
+func (c *client) List(ctx context.Context, filter Filter, limit int32) (ListResult, error) {
+	filterValue := string(filter)
+	if strings.TrimSpace(filterValue) == "" {
 		return ListResult{}, errors.New("Secret API filter is required")
 	}
 	if limit <= 0 {
 		return ListResult{}, errors.New("Secret API limit must be positive")
 	}
-	response, err := c.api.List(ctx, &privatev1.SecretsListRequest{Filter: &filter, Limit: &limit})
+	response, err := c.api.List(ctx, &privatev1.SecretsListRequest{Filter: &filterValue, Limit: &limit})
 	if err != nil {
 		return ListResult{}, fmt.Errorf("failed to list OSAC Secrets: %w", err)
 	}

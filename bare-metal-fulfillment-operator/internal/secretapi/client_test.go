@@ -65,13 +65,12 @@ var _ = Describe("Secret API CEL filters", func() {
 		labelKey := `device"42\segment`
 		got := FilterByTenantAndLabel("system", labelKey)
 
-		Expect(got).To(Equal(
-			`this.metadata.tenant == "system" && "device\"42\\segment" in this.metadata.labels`,
-		))
+		want := Filter(`this.metadata.tenant == "system" && "device\"42\\segment" in this.metadata.labels`)
+		Expect(got).To(Equal(want))
 
 		env, err := cel.NewEnv(cel.Variable("this", cel.DynType))
 		Expect(err).NotTo(HaveOccurred())
-		ast, issues := env.Compile(got)
+		ast, issues := env.Compile(string(got))
 		Expect(issues).To(BeNil())
 		program, err := env.Program(ast)
 		Expect(err).NotTo(HaveOccurred())
