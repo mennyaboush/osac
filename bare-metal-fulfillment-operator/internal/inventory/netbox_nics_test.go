@@ -43,7 +43,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 				Expect(gotContext).To(Equal(ctx))
 				requestedID = gotDeviceID
 				_, err := visit(netboxclient.DeviceInterface{
-					ID: "501", DeviceID: gotDeviceID, Name: "data-0", PrimaryMAC: "AA:BB:CC:DD:EE:01",
+					ID: "501", Name: "data-0", PrimaryMAC: "AA:BB:CC:DD:EE:01",
 				})
 				return err
 			}
@@ -601,9 +601,8 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 	It("LOG-20 discards partial results when interface listing fails", func() {
 		client, api := newNetBoxLogicalMACTestClient()
 		sentinel := errors.New("later interface page failed")
-		api.interfaceList = func(_ context.Context, deviceID string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
+		api.interfaceList = func(_ context.Context, _ string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
 			iface := netboxInterfaceForTest("501", "data-0", "AA:BB:CC:DD:EE:01", nil)
-			iface.DeviceID = deviceID
 			if _, err := visit(iface); err != nil {
 				return err
 			}
@@ -644,7 +643,6 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 			requestedContext = gotContext
 			requestedID = deviceID
 			iface := netboxInterfaceForTest("501", "data-0", "AA:BB:CC:DD:EE:01", nil)
-			iface.DeviceID = deviceID
 			_, err := visit(iface)
 			return err
 		}
@@ -681,13 +679,12 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 
 	It("LOG-25 reads fresh data on every invocation", func() {
 		client, api := newNetBoxLogicalMACTestClient()
-		api.interfaceList = func(_ context.Context, deviceID string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
+		api.interfaceList = func(_ context.Context, _ string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
 			mac := "AA:BB:CC:DD:EE:01"
 			if api.calls == 2 {
 				mac = "52:54:00:16:04:83"
 			}
 			iface := netboxInterfaceForTest("501", "data-0", mac, nil)
-			iface.DeviceID = deviceID
 			_, err := visit(iface)
 			return err
 		}
@@ -754,9 +751,8 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		var accepted []string
-		api.interfaceList = func(_ context.Context, deviceID string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
+		api.interfaceList = func(_ context.Context, _ string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
 			first := netboxInterfaceForTest("501", "data-0", "AA:BB:CC:DD:EE:01", nil)
-			first.DeviceID = deviceID
 			keepGoing, err := visit(first)
 			if err != nil || !keepGoing {
 				return err
@@ -764,7 +760,6 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 			accepted = append(accepted, first.ID)
 			cancel()
 			second := netboxInterfaceForTest("502", "data-1", "AA:BB:CC:DD:EE:02", nil)
-			second.DeviceID = deviceID
 			_, err = visit(second)
 			if err == nil {
 				accepted = append(accepted, second.ID)
@@ -783,9 +778,8 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 		client, api := newNetBoxLogicalMACTestClient()
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		api.interfaceList = func(_ context.Context, deviceID string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
+		api.interfaceList = func(_ context.Context, _ string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
 			iface := netboxInterfaceForTest("501", "data-0", "AA:BB:CC:DD:EE:01", nil)
-			iface.DeviceID = deviceID
 			keepGoing, err := visit(iface)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(keepGoing).To(BeTrue())
@@ -865,11 +859,8 @@ func newNetBoxLogicalMACTestClient() (*NetBoxClient, *nicReadTestAPI) {
 }
 
 func configureNetBoxInterfaces(api *nicReadTestAPI, interfaces ...netboxclient.DeviceInterface) {
-	api.interfaceList = func(_ context.Context, deviceID string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
+	api.interfaceList = func(_ context.Context, _ string, visit func(netboxclient.DeviceInterface) (bool, error)) error {
 		for _, iface := range interfaces {
-			if iface.DeviceID == "" {
-				iface.DeviceID = deviceID
-			}
 			keepGoing, err := visit(iface)
 			if err != nil {
 				return err

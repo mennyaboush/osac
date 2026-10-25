@@ -133,45 +133,25 @@ func (c *Client) ForEachDevice(ctx context.Context, query DeviceQuery, visit fun
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(nonNilContext(ctx), maxPaginationDuration)
-	defer cancel()
-
-	var offset int32
-	for {
-		currentOffset := offset
-		page, _, err := c.listDevicePage(ctx, status, customFields, currentOffset)
+	return forEachPaginatedResult(ctx, func(pageCtx context.Context, offset int32) (pageData[Device], error) {
+		page, _, err := c.listDevicePage(pageCtx, status, customFields, offset)
 		if err != nil {
-			return err
+			return pageData[Device]{}, err
 		}
 		if page == nil {
-			return &APIError{Kind: ErrorKindInvalidResponse}
+			return pageData[Device]{}, &APIError{Kind: ErrorKindInvalidResponse}
 		}
 
-		hasNext := page.GetNext() != ""
-		nextOffset, err := nextPaginationOffset(offset, page.Count, len(page.Results), hasNext)
-		if err != nil {
-			return err
+		devices := make([]Device, len(page.Results))
+		for i, device := range page.Results {
+			devices[i] = fromSDKDevice(device)
 		}
-		for _, device := range page.Results {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			continueListing, err := visit(fromSDKDevice(device))
-			if err != nil {
-				return err
-			}
-			if !continueListing {
-				return ctx.Err()
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !hasNext {
-			return nil
-		}
-		offset = nextOffset
-	}
+		return pageData[Device]{
+			count:   page.Count,
+			hasNext: page.GetNext() != "",
+			results: devices,
+		}, nil
+	}, visit)
 }
 
 // listDevicePage retrieves one device page using the shared GET retry policy.
@@ -205,43 +185,73 @@ func (c *Client) ForEachDeviceCustomField(ctx context.Context, visit func(Custom
 		return &APIError{Kind: ErrorKindInvalidRequest}
 	}
 
-	ctx, cancel := context.WithTimeout(nonNilContext(ctx), maxPaginationDuration)
-	defer cancel()
-
-	var offset int32
-	for {
-		currentOffset := offset
-		page, _, err := retryGET(ctx, func(requestContext context.Context) (*netbox.PaginatedCustomFieldList, *http.Response, error) {
+	return forEachPaginatedResult(ctx, func(pageCtx context.Context, offset int32) (pageData[CustomField], error) {
+		page, _, err := retryGET(pageCtx, func(requestContext context.Context) (*netbox.PaginatedCustomFieldList, *http.Response, error) {
 			return c.api.ExtrasAPI.ExtrasCustomFieldsList(requestContext).
 				ObjectType("dcim.device").
 				Limit(defaultPageSize).
-				Offset(currentOffset).
+				Offset(offset).
 				Execute()
 		})
 		if err != nil {
-			return err
+			return pageData[CustomField]{}, err
 		}
 		if page == nil {
-			return &APIError{Kind: ErrorKindInvalidResponse}
+			return pageData[CustomField]{}, &APIError{Kind: ErrorKindInvalidResponse}
 		}
 
-		hasNext := page.GetNext() != ""
-		nextOffset, err := nextPaginationOffset(offset, page.Count, len(page.Results), hasNext)
-		if err != nil {
-			return err
-		}
-		for _, field := range page.Results {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			continueListing, err := visit(CustomField{
+		fields := make([]CustomField, len(page.Results))
+		for i, field := range page.Results {
+			fields[i] = CustomField{
 				Name:        field.Name,
 				Label:       field.GetLabel(),
 				Type:        string(field.Type.GetValue()),
 				DataType:    field.DataType,
 				Required:    field.GetRequired(),
 				ObjectTypes: append([]string(nil), field.ObjectTypes...),
-			})
+			}
+		}
+		return pageData[CustomField]{
+			count:   page.Count,
+			hasNext: page.GetNext() != "",
+			results: fields,
+		}, nil
+	}, visit)
+}
+
+type pageData[T any] struct {
+	count   int32
+	hasNext bool
+	results []T
+}
+
+func forEachPaginatedResult[T any](
+	ctx context.Context,
+	listPage func(context.Context, int32) (pageData[T], error),
+	visit func(T) (bool, error),
+) error {
+	ctx, cancel := context.WithTimeout(nonNilContext(ctx), maxPaginationDuration)
+	defer cancel()
+
+	var offset int32
+	for {
+		page, err := listPage(ctx, offset)
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		nextOffset, err := nextPaginationOffset(offset, page.count, len(page.results), page.hasNext)
+		if err != nil {
+			return err
+		}
+		for _, result := range page.results {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			continueListing, err := visit(result)
 			if err != nil {
 				return err
 			}
@@ -252,7 +262,7 @@ func (c *Client) ForEachDeviceCustomField(ctx context.Context, visit func(Custom
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if !hasNext {
+		if !page.hasNext {
 			return nil
 		}
 		offset = nextOffset

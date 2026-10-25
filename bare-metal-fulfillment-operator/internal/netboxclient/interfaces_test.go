@@ -64,7 +64,7 @@ var _ = Describe("NetBox device interface listing", Label("OSAC-5953"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(calls.Load()).To(Equal(int32(1)))
 		Expect(got).To(Equal([]DeviceInterface{{
-			ID: "501", DeviceID: "42", Name: "eno1", PrimaryMAC: "AA:BB:CC:DD:EE:01",
+			ID: "501", Name: "eno1", PrimaryMAC: "AA:BB:CC:DD:EE:01",
 			CustomFields: map[string]interface{}{"osac_logical_port": "data-0"},
 		}}))
 	})

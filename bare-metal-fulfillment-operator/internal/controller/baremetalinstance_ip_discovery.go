@@ -28,6 +28,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/api/v1alpha1"
+	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/inventory"
 	opv1alpha1 "github.com/osac-project/osac/osac-operator/api/v1alpha1"
 	"github.com/osac-project/osac/osac-operator/pkg/provisioning"
 )
@@ -43,6 +44,26 @@ type DHCPLease struct {
 	Interface  string `json:"interface"`
 	IPAddress  string `json:"ip_address"`
 	MACAddress string `json:"mac_address"`
+}
+
+type ipDiscoveryMACProvider struct {
+	provisioning.ProvisioningProvider
+	inventoryClient inventory.Client
+}
+
+func (p *ipDiscoveryMACProvider) TriggerProvision(ctx context.Context, resource client.Object) (*provisioning.ProvisionResult, error) {
+	bareMetalInstance, ok := resource.(*v1alpha1.BareMetalInstance)
+	if ok && p.inventoryClient != nil && bareMetalInstance.Spec.ExternalHostID != "" {
+		ifaceMACs, err := p.inventoryClient.GetHostLogicalPortMACs(ctx, bareMetalInstance.Spec.ExternalHostID)
+		if err != nil {
+			logf.FromContext(ctx).Error(err, "Failed to resolve host interface MACs; falling back to name-based lease matching",
+				"host", bareMetalInstance.Spec.ExternalHostID)
+		} else if subnetMACs := buildSubnetMACMap(bareMetalInstance.Spec.NetworkAttachments, ifaceMACs); len(subnetMACs) > 0 {
+			ctx = provisioning.WithNetworkAttachmentMACs(ctx, subnetMACs)
+		}
+	}
+
+	return p.ProvisioningProvider.TriggerProvision(ctx, resource)
 }
 
 func (r *BareMetalInstanceReconciler) reconcileIPDiscovery(
@@ -81,20 +102,6 @@ func (r *BareMetalInstanceReconciler) reconcileIPDiscovery(
 
 	log.Info("Reconciling IP discovery", "attachments", len(bareMetalInstance.Spec.NetworkAttachments))
 
-	// Resolve each attachment's NIC MAC from the inventory backend and
-	// plumb a subnet-ref → MAC map into the job's extra_vars. The query_dhcp_lease role
-	// matches DHCP leases by MAC when the host is not registered as a named fabric
-	// server; an absent or partial mapping degrades to name-based matching.
-	if r.InventoryClient != nil && bareMetalInstance.Spec.ExternalHostID != "" {
-		ifaceMACs, macErr := r.InventoryClient.GetHostLogicalPortMACs(ctx, bareMetalInstance.Spec.ExternalHostID)
-		if macErr != nil {
-			log.Error(macErr, "Failed to resolve host interface MACs; falling back to name-based lease matching",
-				"host", bareMetalInstance.Spec.ExternalHostID)
-		} else if subnetMACs := buildSubnetMACMap(bareMetalInstance.Spec.NetworkAttachments, ifaceMACs); len(subnetMACs) > 0 {
-			ctx = provisioning.WithNetworkAttachmentMACs(ctx, subnetMACs)
-		}
-	}
-
 	desiredVersion, err := provisioning.ComputeDesiredConfigVersion(struct {
 		NetworkAttachments []v1alpha1.BareMetalNetworkAttachment
 		ExternalHostID     string
@@ -112,8 +119,16 @@ func (r *BareMetalInstanceReconciler) reconcileIPDiscovery(
 		bareMetalInstance.Status.IPDiscoveryJobs = []opv1alpha1.JobStatus{}
 	}
 
+	provider := r.IPDiscoveryProvider
+	if r.InventoryClient != nil {
+		provider = &ipDiscoveryMACProvider{
+			ProvisioningProvider: r.IPDiscoveryProvider,
+			inventoryClient:      r.InventoryClient,
+		}
+	}
+
 	result, err := provisioning.RunProvisioningLifecycle(
-		ctx, r.IPDiscoveryProvider, bareMetalInstance,
+		ctx, provider, bareMetalInstance,
 		&provisioning.State{
 			Jobs:                 &bareMetalInstance.Status.IPDiscoveryJobs,
 			DesiredConfigVersion: desiredVersion,

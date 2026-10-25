@@ -373,6 +373,49 @@ var _ = Describe("OSAC-5953 native NetBox NIC handoff", Label("OSAC-5953"), func
 		Expect(bmi.Status.Hardware).To(BeNil())
 		Expect(requests.Load()).To(BeZero())
 	})
+
+	It("CTRL-18 does not query NetBox while polling an existing DHCP job", func() {
+		server, requests := newOSAC5953FailingNetBoxServer()
+		DeferCleanup(server.Close)
+		manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
+		manager.EXPECT().Namespace().AnyTimes().Return("baremetal")
+		inventoryClient := newOSAC5953InventoryClient(server, manager)
+		bmi := newOSAC5953BareMetalInstance("data-0")
+		bmi.SetStatusCondition(v1alpha1.HostConditionNetworkHandoffComplete,
+			metav1.ConditionTrue, "Succeeded", "Handoff complete")
+		bmi.Status.IPDiscoveryJobs = []opv1alpha1.JobStatus{{
+			JobID: "existing-ip-discovery-job",
+			Type:  opv1alpha1.JobTypeProvision,
+			State: opv1alpha1.JobStatePending,
+		}}
+
+		var triggerCount, statusCount int
+		provider := &mockProvisioningProvider{
+			triggerProvisionFunc: func(context.Context, client.Object) (*provisioning.ProvisionResult, error) {
+				triggerCount++
+				return &provisioning.ProvisionResult{JobID: "unexpected-job", InitialState: opv1alpha1.JobStatePending}, nil
+			},
+			getProvisionStatusFunc: func(_ context.Context, _ client.Object, jobID string) (provisioning.ProvisionStatus, error) {
+				statusCount++
+				return provisioning.ProvisionStatus{JobID: jobID, State: opv1alpha1.JobStatePending}, nil
+			},
+		}
+		reconciler := &BareMetalInstanceReconciler{
+			Client:                        k8sClient,
+			Scheme:                        k8sClient.Scheme(),
+			InventoryClient:               inventoryClient,
+			IPDiscoveryProvider:           provider,
+			ProvisionPollIntervalDuration: time.Second,
+		}
+
+		result, err := reconciler.reconcileIPDiscovery(context.Background(), bmi)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+		Expect(triggerCount).To(BeZero())
+		Expect(statusCount).To(Equal(1))
+		Expect(requests.Load()).To(BeZero())
+	})
 })
 
 func newOSAC5953BareMetalInstance(interfaceName string) *v1alpha1.BareMetalInstance {

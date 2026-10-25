@@ -27,7 +27,6 @@ import (
 // DeviceInterface contains the native interface fields used for logical MAC lookup.
 type DeviceInterface struct {
 	ID           string
-	DeviceID     string
 	Name         string
 	PrimaryMAC   string
 	CustomFields map[string]interface{}
@@ -48,52 +47,27 @@ func (c *Client) ForEachDeviceInterface(
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(nonNilContext(ctx), maxPaginationDuration)
-	defer cancel()
-
-	var offset int32
-	for {
-		page, response, err := c.listDeviceInterfacePage(ctx, numericID, offset)
+	return forEachPaginatedResult(ctx, func(pageCtx context.Context, offset int32) (pageData[netbox.Interface], error) {
+		page, response, err := c.listDeviceInterfacePage(pageCtx, numericID, offset)
 		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
+			return pageData[netbox.Interface]{}, err
 		}
 		if page == nil || response == nil || page.Results == nil {
-			return &APIError{Kind: ErrorKindInvalidResponse}
+			return pageData[netbox.Interface]{}, &APIError{Kind: ErrorKindInvalidResponse}
 		}
 
-		hasNext := page.GetNext() != ""
-		nextOffset, err := nextPaginationOffset(offset, page.Count, len(page.Results), hasNext)
+		return pageData[netbox.Interface]{
+			count:   page.Count,
+			hasNext: page.GetNext() != "",
+			results: page.Results,
+		}, nil
+	}, func(value netbox.Interface) (bool, error) {
+		interfaceValue, err := fromSDKDeviceInterface(value, numericID)
 		if err != nil {
-			return err
+			return false, err
 		}
-
-		for _, value := range page.Results {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			interfaceValue, err := fromSDKDeviceInterface(value, numericID)
-			if err != nil {
-				return err
-			}
-			keepGoing, err := visit(interfaceValue)
-			if err != nil {
-				return err
-			}
-			if !keepGoing {
-				return ctx.Err()
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !hasNext {
-			return nil
-		}
-		offset = nextOffset
-	}
+		return visit(interfaceValue)
+	})
 }
 
 func (c *Client) listDeviceInterfacePage(
@@ -125,7 +99,6 @@ func fromSDKDeviceInterface(value netbox.Interface, requestedDeviceID int32) (De
 
 	return DeviceInterface{
 		ID:           strconv.FormatInt(int64(value.Id), 10),
-		DeviceID:     strconv.FormatInt(int64(value.Device.Id), 10),
 		Name:         value.GetName(),
 		PrimaryMAC:   primaryMAC,
 		CustomFields: cloneCustomFields(value.CustomFields),

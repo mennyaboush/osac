@@ -219,10 +219,14 @@ func (c *NetBoxClient) parseNetBoxHostID(inventoryHostID string) (string, string
 	if deviceID == "" {
 		return "", "", errors.New("invalid NetBox inventory host ID")
 	}
-	if c.bmhManager == nil || c.bmhManager.Namespace() == "" {
+	if c.bmhManager == nil {
 		return "", "", errors.New("NetBox inventory requires a Metal3 namespace")
 	}
-	if namespace != c.bmhManager.Namespace() {
+	configuredNamespace := c.bmhManager.Namespace()
+	if configuredNamespace == "" {
+		return "", "", errors.New("NetBox inventory requires a Metal3 namespace")
+	}
+	if namespace != configuredNamespace {
 		return "", "", errors.New("NetBox inventory host ID is outside the Metal3 namespace")
 	}
 	return namespace, deviceID, nil

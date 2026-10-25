@@ -32,29 +32,16 @@ func (c *NetBoxClient) parseNetBoxNICHostID(inventoryHostID string) (string, str
 		return "", "", errors.New("NetBox inventory client is required")
 	}
 
-	namespace, name, err := ParseHostID(inventoryHostID)
-	if err != nil {
-		return "", "", fmt.Errorf("invalid NetBox inventory host ID: %w", err)
-	}
-	configuredNamespace, err := c.metal3Namespace()
+	_, deviceID, err := c.parseNetBoxHostID(inventoryHostID)
 	if err != nil {
 		return "", "", err
 	}
-	if namespace != configuredNamespace {
-		return "", "", fmt.Errorf("NetBox inventory host ID namespace %q does not match the configured Metal3 namespace", namespace)
-	}
-
-	const prefix = "netbox-"
-	if !strings.HasPrefix(name, prefix) {
-		return "", "", fmt.Errorf("NetBox inventory host name must start with %q", prefix)
-	}
-	deviceID := strings.TrimPrefix(name, prefix)
 	numericID, err := strconv.ParseInt(deviceID, 10, 32)
 	if err != nil || numericID <= 0 || strconv.FormatInt(numericID, 10) != deviceID {
 		return "", "", fmt.Errorf("NetBox inventory host name must contain a canonical positive device ID")
 	}
 
-	return name, deviceID, nil
+	return netBoxHostPrefix + deviceID, deviceID, nil
 }
 
 func (c *NetBoxClient) GetHostNICs(ctx context.Context, inventoryHostID string) ([]HostNIC, error) {
