@@ -357,8 +357,3 @@ func netBoxInstanceOwner(device netboxclient.Device) (string, error) {
 func (*NetBoxClient) UnassignHost(_ context.Context, _ string, _ []string) error {
 	return errNetBoxClientNotImplemented
 }
-
-// GetHostLogicalPortMACs is not implemented until NetBox inventory operations are added.
-func (*NetBoxClient) GetHostLogicalPortMACs(_ context.Context, _ string) (map[string]string, error) {
-	return nil, errNetBoxClientNotImplemented
-}

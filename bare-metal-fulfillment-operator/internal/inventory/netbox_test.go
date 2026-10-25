@@ -36,15 +36,6 @@ import (
 const testNetBoxHostClass = "metal3"
 
 var _ = Describe("NetBox inventory client", func() {
-	Describe("GetHostLogicalPortMACs", func() {
-		It("returns a not-implemented error", func() {
-			macs, err := (&NetBoxClient{}).GetHostLogicalPortMACs(context.Background(), "baremetal/netbox-42")
-
-			Expect(errors.Is(err, errNetBoxClientNotImplemented)).To(BeTrue())
-			Expect(macs).To(BeNil())
-		})
-	})
-
 	Describe("ParseNetBoxOptions", func() {
 		DescribeTable("rejects invalid options",
 			func(options map[string]any, wantErr string) {
