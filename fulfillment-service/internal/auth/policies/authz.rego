@@ -183,6 +183,7 @@ is_reader_only if {
   not is_tenant_idp_manager
   not is_csi
 }
+
 # Check if an account is a regular client (no admin, tenant management, or CSI roles):
 default is_client = false
 is_client if {
