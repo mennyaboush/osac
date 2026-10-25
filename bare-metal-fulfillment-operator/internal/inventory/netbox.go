@@ -419,7 +419,7 @@ type DeviceCredentialResolver interface {
 }
 
 type netBoxSecretReader interface {
-	List(ctx context.Context, filter string, limit int32) (secretapi.ListResult, error)
+	List(ctx context.Context, filter secretapi.Filter, limit int32) (secretapi.ListResult, error)
 	Get(ctx context.Context, id string) (secretapi.Secret, error)
 }
 
