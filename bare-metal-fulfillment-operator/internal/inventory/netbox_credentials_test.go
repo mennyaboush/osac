@@ -27,7 +27,7 @@ import (
 )
 
 type fakeSecretReader struct {
-	listFilter string
+	listFilter secretapi.Filter
 	listLimit  int32
 	listResult secretapi.ListResult
 	listError  error
@@ -38,7 +38,7 @@ type fakeSecretReader struct {
 	getCalls   int
 }
 
-func (f *fakeSecretReader) List(_ context.Context, filter string, limit int32) (secretapi.ListResult, error) {
+func (f *fakeSecretReader) List(_ context.Context, filter secretapi.Filter, limit int32) (secretapi.ListResult, error) {
 	f.listCalls++
 	f.listFilter = filter
 	f.listLimit = limit
@@ -87,7 +87,7 @@ var _ = Describe("NetBox credential resolver", func() {
 			Username:       []byte("bmc-user"),
 			Password:       []byte("bmc-password"),
 		}))
-		Expect(reader.listFilter).To(Equal(`this.metadata.tenant == "system" && "osac.openshift.io/netbox-device-42" in this.metadata.labels`))
+		Expect(reader.listFilter).To(Equal(secretapi.Filter(`this.metadata.tenant == "system" && "osac.openshift.io/netbox-device-42" in this.metadata.labels`)))
 		Expect(reader.listLimit).To(Equal(int32(2)))
 		Expect(reader.getID).To(Equal("secret-1"))
 		Expect(reader.listCalls).To(Equal(1))
