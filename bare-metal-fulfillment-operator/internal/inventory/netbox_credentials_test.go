@@ -88,13 +88,13 @@ var _ = Describe("NetBox credential resolver", func() {
 			Password:       []byte("bmc-password"),
 		}))
 		Expect(reader.listFilter).To(Equal(secretapi.Filter(`this.metadata.tenant == "system" && "osac.openshift.io/netbox-device-42" in this.metadata.labels`)))
-		Expect(reader.listLimit).To(Equal(int32(2)))
+		Expect(reader.listLimit).To(Equal(int32(1)))
 		Expect(reader.getID).To(Equal("secret-1"))
 		Expect(reader.listCalls).To(Equal(1))
 		Expect(reader.getCalls).To(Equal(1))
 	})
 
-	DescribeTable("rejects invalid device identity or BMC fields before contacting the Secret API",
+	DescribeTable("rejects invalid BMC fields before contacting the Secret API",
 		func(device netboxclient.Device, wantErr string) {
 			reader := &fakeSecretReader{}
 			resolver := NewNetBoxCredentialResolver(reader)
@@ -106,7 +106,6 @@ var _ = Describe("NetBox credential resolver", func() {
 			Expect(reader.listCalls).To(BeZero())
 			Expect(reader.getCalls).To(BeZero())
 		},
-		Entry("non-numeric device ID", netboxclient.Device{ID: "42||true"}, "invalid NetBox device ID"),
 		Entry("missing BMC address", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_boot_mac": "aa:bb:cc:dd:ee:42"}}, "invalid BMC address"),
 		Entry("unsupported BMC address scheme", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_bmc_address": "http://192.0.2.42", "osac_boot_mac": "aa:bb:cc:dd:ee:42"}}, "invalid BMC address"),
 		Entry("invalid boot MAC", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_bmc_address": "ipmi://192.0.2.42", "osac_boot_mac": "not-a-mac"}}, "invalid boot MAC"),

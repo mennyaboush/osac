@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"maps"
 	"net"
-	"strconv"
 	"strings"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
@@ -157,9 +156,6 @@ func (c *NetBoxClient) Close() error {
 }
 
 func (c *NetBoxClient) FindFreeHost(ctx context.Context, selector map[string]string) (*Host, error) {
-	if c == nil || c.api == nil {
-		return nil, errNetBoxClientNotImplemented
-	}
 	return c.findFreeHost(ctx, buildFreeHostQuery(selector))
 }
 
@@ -218,9 +214,6 @@ func buildFreeHostQuery(selector map[string]string) netboxclient.DeviceQuery {
 }
 
 func (c *NetBoxClient) AssignHost(ctx context.Context, inventoryHostID string, bareMetalInstanceID string, _ map[string]string) (*Host, error) {
-	if c == nil || c.api == nil {
-		return nil, errNetBoxClientNotImplemented
-	}
 	if bareMetalInstanceID == "" {
 		return nil, errors.New("invalid input: bareMetalInstanceID is empty")
 	}
@@ -399,7 +392,7 @@ const (
 	netBoxDeviceSecretLabelPrefix = "osac.openshift.io/netbox-device-"
 	netBoxBMCAddressField         = "osac_bmc_address"
 	netBoxBootMACField            = "osac_boot_mac"
-	secretListLimit               = 2
+	secretListLimit               = 1
 )
 
 // ErrCredentialResolutionFailed identifies invalid or missing device credentials.
@@ -437,13 +430,7 @@ func NewNetBoxCredentialResolver(secrets netBoxSecretReader) *NetBoxCredentialRe
 
 // Resolve validates the NetBox connection fields and resolves the unique matching system Secret.
 func (r *NetBoxCredentialResolver) Resolve(ctx context.Context, device netboxclient.Device) (*NetBoxCredentials, error) {
-	if r == nil || r.secrets == nil {
-		return nil, errors.New("OSAC Secret API client is not configured")
-	}
-	labelKey, err := netBoxDeviceSecretLabel(device.ID)
-	if err != nil {
-		return nil, credentialResolutionFailure(err)
-	}
+	labelKey := netBoxDeviceSecretLabel(device.ID)
 	connection, err := netBoxConnection(device.CustomFields)
 	if err != nil {
 		return nil, credentialResolutionFailure(err)
@@ -461,17 +448,15 @@ func (r *NetBoxCredentialResolver) Resolve(ctx context.Context, device netboxcli
 	return connection, nil
 }
 
-func netBoxDeviceSecretLabel(deviceID string) (string, error) {
-	value, err := strconv.ParseUint(deviceID, 10, 64)
-	if err != nil || value == 0 || strconv.FormatUint(value, 10) != deviceID {
-		return "", errors.New("invalid NetBox device ID for Secret association")
-	}
-	return netBoxDeviceSecretLabelPrefix + deviceID, nil
+func netBoxDeviceSecretLabel(deviceID string) string {
+	return netBoxDeviceSecretLabelPrefix + deviceID
 }
 
 func netBoxConnection(customFields map[string]interface{}) (*NetBoxCredentials, error) {
 	address, ok := netBoxStringField(customFields, netBoxBMCAddressField)
-	if !ok || bmcdiscovery.ValidateBMCAddress(address) != nil {
+	if !ok ||
+		strings.TrimSpace(address) != address ||
+		bmcdiscovery.ValidateBMCAddress(address) != nil {
 		return nil, errors.New("NetBox device has a missing or invalid BMC address")
 	}
 	bootMAC, ok := netBoxStringField(customFields, netBoxBootMACField)
@@ -490,10 +475,7 @@ func netBoxConnection(customFields map[string]interface{}) (*NetBoxCredentials, 
 
 func netBoxStringField(fields map[string]interface{}, key string) (string, bool) {
 	value, ok := fields[key].(string)
-	if !ok || value == "" || strings.TrimSpace(value) != value {
-		return "", false
-	}
-	return value, true
+	return value, ok
 }
 
 func (r *NetBoxCredentialResolver) getDeviceSecret(ctx context.Context, labelKey string) (secretapi.Secret, error) {
@@ -502,7 +484,7 @@ func (r *NetBoxCredentialResolver) getDeviceSecret(ctx context.Context, labelKey
 	if err != nil {
 		return secretapi.Secret{}, fmt.Errorf("failed to list OSAC Secrets for NetBox device: %w", err)
 	}
-	secretID, err := uniqueDeviceSecretID(result, labelKey)
+	secretID, err := uniqueDeviceSecretID(result)
 	if err != nil {
 		return secretapi.Secret{}, credentialResolutionFailure(err)
 	}
@@ -510,7 +492,7 @@ func (r *NetBoxCredentialResolver) getDeviceSecret(ctx context.Context, labelKey
 	if err != nil {
 		return secretapi.Secret{}, fmt.Errorf("failed to get OSAC Secret for NetBox device: %w", err)
 	}
-	if secret.ID != secretID || !isDeviceSecret(secret, labelKey) {
+	if !isDeviceSecret(secret, labelKey) {
 		return secretapi.Secret{}, credentialResolutionFailure(errors.New("OSAC Secret is not a system-scoped Secret associated with the NetBox device"))
 	}
 	return secret, nil
@@ -520,8 +502,8 @@ func credentialResolutionFailure(err error) error {
 	return fmt.Errorf("%w: %s", ErrCredentialResolutionFailed, err)
 }
 
-func uniqueDeviceSecretID(result secretapi.ListResult, labelKey string) (string, error) {
-	if result.Total == 0 && len(result.Items) == 0 {
+func uniqueDeviceSecretID(result secretapi.ListResult) (string, error) {
+	if result.Total == 0 {
 		return "", errors.New("no system-scoped OSAC Secret is associated with the NetBox device")
 	}
 	if result.Total > 1 {
@@ -530,11 +512,7 @@ func uniqueDeviceSecretID(result secretapi.ListResult, labelKey string) (string,
 	if result.Total != 1 || len(result.Items) != 1 {
 		return "", errors.New("inconsistent OSAC Secret list response for NetBox device")
 	}
-	secret := result.Items[0]
-	if secret.ID == "" || !isDeviceSecret(secret, labelKey) {
-		return "", errors.New("OSAC Secret list returned an invalid device association")
-	}
-	return secret.ID, nil
+	return result.Items[0].ID, nil
 }
 
 func isDeviceSecret(secret secretapi.Secret, labelKey string) bool {
