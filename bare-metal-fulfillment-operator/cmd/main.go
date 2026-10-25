@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -472,11 +473,13 @@ func setupBareMetalInstanceController(
 	if err != nil {
 		return err
 	}
-	context.AfterFunc(ctx, func() {
-		if closeErr := inventoryClient.Close(); closeErr != nil {
-			setupLog.Error(closeErr, "Failed to close inventory client")
-		}
-	})
+	if closer, ok := inventoryClient.(io.Closer); ok {
+		context.AfterFunc(ctx, func() {
+			if closeErr := closer.Close(); closeErr != nil {
+				setupLog.Error(closeErr, "Failed to close inventory client")
+			}
+		})
+	}
 	managementClient, err := management.NewClient(ctx, &managementConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create management client: %w", err)
