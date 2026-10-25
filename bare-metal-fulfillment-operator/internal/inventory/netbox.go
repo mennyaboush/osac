@@ -358,10 +358,6 @@ func (*NetBoxClient) UnassignHost(_ context.Context, _ string, _ []string) error
 	return errNetBoxClientNotImplemented
 }
 
-func (*NetBoxClient) GetHostNICs(_ context.Context, _ string) ([]HostNIC, error) {
-	return nil, errNetBoxClientNotImplemented
-}
-
 // GetHostLogicalPortMACs is not implemented until NetBox inventory operations are added.
 func (*NetBoxClient) GetHostLogicalPortMACs(_ context.Context, _ string) (map[string]string, error) {
 	return nil, errNetBoxClientNotImplemented

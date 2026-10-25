@@ -140,9 +140,6 @@ var _ = Describe("NetBox inventory client", func() {
 			err := client.UnassignHost(ctx, "baremetal/netbox-42", []string{"192.0.2.42"})
 			Expect(errors.Is(err, errNetBoxClientNotImplemented)).To(BeTrue())
 
-			nics, err := client.GetHostNICs(ctx, "baremetal/netbox-42")
-			Expect(nics).To(BeNil())
-			Expect(errors.Is(err, errNetBoxClientNotImplemented)).To(BeTrue())
 		})
 	})
 })
