@@ -709,11 +709,12 @@ func (c *BCMClient) clearBCMAssignment(ctx context.Context, hostname, bareMetalI
 		return false, nil
 	}
 
-	if owner, assigned := device.ExtraValues[bcmclient.ExtraValueInstanceID]; assigned && owner != bareMetalInstanceID {
+	owner, assigned := device.ExtraValues[bcmclient.ExtraValueInstanceID]
+	if assigned && owner != bareMetalInstanceID {
 		return true, nil
 	}
 
-	if _, assigned := device.ExtraValues[bcmclient.ExtraValueInstanceID]; !assigned {
+	if !assigned {
 		log.Info("BCM host already unassigned, skipping extra_values cleanup", "hostname", hostname)
 		return false, nil
 	}
