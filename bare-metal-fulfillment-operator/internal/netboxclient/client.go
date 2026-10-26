@@ -51,6 +51,12 @@ type Device struct {
 	CustomFields map[string]interface{}
 }
 
+// DeviceInterface contains the native interface fields used for MAC lookup.
+type DeviceInterface struct {
+	Name       string
+	PrimaryMAC string
+}
+
 // CustomField describes a NetBox custom field attached to dcim.device.
 type CustomField struct {
 	Name        string
@@ -300,6 +306,49 @@ func (c *Client) GetDevice(ctx context.Context, id string) (DeviceSnapshot, erro
 		Device: fromSDKDevice(*device),
 		ETag:   response.Header.Get("ETag"),
 	}, nil
+}
+
+// ListDeviceInterfaces returns the interfaces modeled for a NetBox device.
+func (c *Client) ListDeviceInterfaces(ctx context.Context, id string) ([]DeviceInterface, error) {
+	deviceID, err := parseDeviceID(id)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(nonNilContext(ctx), maxPaginationDuration)
+	defer cancel()
+
+	var interfaces []DeviceInterface
+	var offset int32
+	for {
+		currentOffset := offset
+		page, _, err := retryGET(ctx, func(requestContext context.Context) (*netbox.PaginatedInterfaceList, *http.Response, error) {
+			return c.api.DcimAPI.DcimInterfacesList(requestContext).
+				DeviceId([]int32{deviceID}).Limit(defaultPageSize).Offset(currentOffset).Execute()
+		})
+		if err != nil {
+			return nil, err
+		}
+		if page == nil {
+			return nil, &APIError{Kind: ErrorKindInvalidResponse}
+		}
+
+		for _, value := range page.Results {
+			mac := ""
+			if primary := value.PrimaryMacAddress.Get(); primary != nil {
+				mac = primary.GetMacAddress()
+			}
+			interfaces = append(interfaces, DeviceInterface{Name: value.Name, PrimaryMAC: mac})
+		}
+
+		hasNext := page.GetNext() != ""
+		if !hasNext {
+			return interfaces, nil
+		}
+		offset, err = nextPaginationOffset(offset, page.Count, len(page.Results), hasNext)
+		if err != nil {
+			return nil, err
+		}
+	}
 }
 
 // PatchDevice sends one conditional PATCH. A missing or invalid ETag fails

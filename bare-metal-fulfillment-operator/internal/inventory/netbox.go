@@ -53,6 +53,7 @@ var errNetBoxClientNotImplemented = errors.New("NetBox inventory client is not i
 type NetBoxAPI interface {
 	ForEachDevice(ctx context.Context, query netboxclient.DeviceQuery, visit func(netboxclient.Device) (bool, error)) error
 	ForEachDeviceCustomField(ctx context.Context, visit func(netboxclient.CustomField) (bool, error)) error
+	ListDeviceInterfaces(ctx context.Context, id string) ([]netboxclient.DeviceInterface, error)
 	GetDevice(ctx context.Context, id string) (netboxclient.DeviceSnapshot, error)
 	PatchDevice(ctx context.Context, id string, patch netboxclient.DevicePatch, etag string) (netboxclient.DeviceSnapshot, error)
 }
@@ -363,68 +364,55 @@ func (c *NetBoxClient) GetHostNICs(ctx context.Context, inventoryHostID string) 
 	if err != nil {
 		return nil, err
 	}
-	return c.readHostNICs(ctx, netBoxHostPrefix+deviceID)
-}
-
-func (c *NetBoxClient) readHostNICs(ctx context.Context, bmhName string) ([]HostNIC, error) {
-	macs, err := c.bmhManager.GetHardwareNICs(ctx, bmhName)
-	if err != nil {
+	macs, err := c.bmhManager.GetHardwareNICs(ctx, netBoxHostPrefix+deviceID)
+	if err != nil || len(macs) == 0 {
 		return nil, err
 	}
-	return hostNICsFromMACs(macs), nil
-}
-
-func hostNICsFromMACs(macs []string) []HostNIC {
-	if len(macs) == 0 {
-		return nil
-	}
 	nics := make([]HostNIC, len(macs))
-	populateHostNICs(nics, macs)
-	return nics
-}
-
-func populateHostNICs(nics []HostNIC, macs []string) {
 	for i, mac := range macs {
 		nics[i] = HostNIC{MAC: strings.ToLower(mac)}
 	}
+	return nics, nil
 }
 
-// GetHostLogicalPortMACs reads the optional mapping from the NetBox device.
+// GetHostLogicalPortMACs reads native interfaces before using the device fallback.
 func (c *NetBoxClient) GetHostLogicalPortMACs(ctx context.Context, inventoryHostID string) (map[string]string, error) {
 	_, deviceID, err := c.parseNetBoxHostID(inventoryHostID)
 	if err != nil {
 		return nil, err
 	}
-	return c.readHostLogicalPortMACs(ctx, deviceID)
-}
+	if c.api == nil {
+		return nil, errNetBoxClientNotImplemented
+	}
 
-func (c *NetBoxClient) readHostLogicalPortMACs(ctx context.Context, deviceID string) (map[string]string, error) {
+	interfaces, interfaceErr := c.api.ListDeviceInterfaces(ctx, deviceID)
+	macs := make(map[string]string, len(interfaces))
+	for _, iface := range interfaces {
+		if iface.PrimaryMAC != "" {
+			macs[iface.Name] = iface.PrimaryMAC
+		}
+	}
+	if len(macs) > 0 {
+		return macs, nil
+	}
+
 	snapshot, err := c.readNetBoxDevice(ctx, deviceID)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(interfaceErr, err)
 	}
-	return netBoxInterfaceMACs(snapshot.Device.CustomFields["osac_interface_macs"])
-}
-
-func netBoxInterfaceMACs(value interface{}) (map[string]string, error) {
-	if value == nil {
-		return map[string]string{}, nil
+	value := snapshot.Device.CustomFields["osac_interface_macs"]
+	if value != nil {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		macs = map[string]string{}
+		if err := json.Unmarshal(raw, &macs); err != nil {
+			return nil, err
+		}
+		if len(macs) > 0 {
+			return macs, nil
+		}
 	}
-	return decodeNetBoxInterfaceMACs(value)
-}
-
-func decodeNetBoxInterfaceMACs(value interface{}) (map[string]string, error) {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return nil, err
-	}
-	return parseNetBoxInterfaceMACs(raw)
-}
-
-func parseNetBoxInterfaceMACs(raw []byte) (map[string]string, error) {
-	macs := map[string]string{}
-	if err := json.Unmarshal(raw, &macs); err != nil {
-		return nil, err
-	}
-	return macs, nil
+	return nil, errors.Join(interfaceErr, errors.New("NetBox device has no interface MAC mapping"))
 }
