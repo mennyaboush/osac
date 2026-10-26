@@ -34,6 +34,7 @@ import (
 )
 
 const testNetBoxHostClass = "metal3"
+
 var _ = Describe("NetBox inventory client", func() {
 	Describe("GetHostLogicalPortMACs", func() {
 		It("returns a not-implemented error", func() {
@@ -352,7 +353,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		claimedDevice := testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123")
 		claimedDevice.Device.CustomFields["osac_managed"] = false
 		api := &selectorQueryTestAPI{deviceSnapshot: freeDevice, patchSnapshot: claimedDevice}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -365,7 +366,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		api := &selectorQueryTestAPI{
 			deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, ""),
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -380,7 +381,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 			deviceSnapshot: freeDevice,
 			patchSnapshot:  testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -399,7 +400,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		api := &selectorQueryTestAPI{
 			deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -415,7 +416,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 			deviceSnapshot: freeDevice,
 			patchErr:       &netboxclient.APIError{Kind: netboxclient.ErrorKindInvalidETag},
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -431,7 +432,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 			deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""),
 			patchErr:       patchErr,
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -447,7 +448,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 			deviceSnapshot: freeDevice,
 			patchSnapshot:  freeDevice,
 		}
-		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+		client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -468,7 +469,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 					StatusCode: http.StatusPreconditionFailed,
 				},
 			}
-			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass)
+			client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
 
 			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
