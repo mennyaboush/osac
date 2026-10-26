@@ -353,7 +353,7 @@ func netBoxInstanceOwner(device netboxclient.Device) (string, error) {
 	return owner, nil
 }
 
-func (*NetBoxClient) UnassignHost(_ context.Context, _ string, _ []string) error {
+func (*NetBoxClient) UnassignHost(_ context.Context, _, _ string, _ []string) error {
 	return errNetBoxClientNotImplemented
 }
 
