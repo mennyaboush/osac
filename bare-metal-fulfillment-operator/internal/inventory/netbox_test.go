@@ -638,7 +638,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 	})
 
 	DescribeTable("reconciles an uncertain quarantine write",
-		func(patchErr error, latest netboxclient.DeviceSnapshot, wantErr string) {
+		func(patchErr error, latest netboxclient.DeviceSnapshot, wantErr string, wantPatchCause bool) {
 			api := &selectorQueryTestAPI{
 				deviceSnapshots: []netboxclient.DeviceSnapshot{
 					stagedManagedDeviceSnapshot(`W/"device-revision-1"`), latest,
@@ -655,15 +655,17 @@ var _ = Describe("NetBox assignment credential checks", func() {
 				Expect(err).NotTo(HaveOccurred())
 			} else {
 				Expect(err).To(MatchError(ContainSubstring(wantErr)))
+				Expect(errors.Is(err, patchErr)).To(Equal(wantPatchCause))
 			}
 			Expect(api.patchCalls).To(Equal(1))
 			Expect(api.deviceReadIDs).To(Equal([]string{"46", "46"}))
 		},
-		Entry("412 and already failed", &netboxclient.APIError{Kind: netboxclient.ErrorKindConflict}, testNetBoxAssignmentSnapshot("failed", ""), ""),
-		Entry("lost response and already failed", &netboxclient.APIError{Kind: netboxclient.ErrorKindTransport}, testNetBoxAssignmentSnapshot("failed", ""), ""),
-		Entry("412 and claimed elsewhere", &netboxclient.APIError{Kind: netboxclient.ErrorKindConflict}, testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-other"), ""),
-		Entry("412 and still staged", &netboxclient.APIError{Kind: netboxclient.ErrorKindConflict}, testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""), "retry"),
-		Entry("reread identifies another device", &netboxclient.APIError{Kind: netboxclient.ErrorKindTransport}, netboxclient.DeviceSnapshot{Device: netboxclient.Device{ID: "47"}}, "different device"),
+		Entry("412 and already failed", &netboxclient.APIError{Kind: netboxclient.ErrorKindConflict}, testNetBoxAssignmentSnapshot("failed", ""), "", false),
+		Entry("lost response and already failed", &netboxclient.APIError{Kind: netboxclient.ErrorKindTransport}, testNetBoxAssignmentSnapshot("failed", ""), "", false),
+		Entry("412 and claimed elsewhere", &netboxclient.APIError{Kind: netboxclient.ErrorKindConflict}, testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-other"), "", false),
+		Entry("412 and still staged", &netboxclient.APIError{Kind: netboxclient.ErrorKindConflict}, testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""), "retry", true),
+		Entry("transport failure and still staged", &netboxclient.APIError{Kind: netboxclient.ErrorKindTransport}, testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""), "retry", true),
+		Entry("reread identifies another device", &netboxclient.APIError{Kind: netboxclient.ErrorKindTransport}, netboxclient.DeviceSnapshot{Device: netboxclient.Device{ID: "47"}}, "different device", false),
 	)
 
 	It("returns an error when the quarantine response does not confirm failure", func() {

@@ -309,7 +309,11 @@ func (c *NetBoxClient) markNetBoxDeviceFailed(ctx context.Context, deviceID, eta
 		if readErr != nil {
 			return nil, fmt.Errorf("failed to confirm NetBox credential quarantine: %w", readErr)
 		}
-		return netBoxQuarantineOutcome(deviceID, latest.Device, true)
+		host, outcomeErr := netBoxQuarantineOutcome(deviceID, latest.Device, true)
+		if outcomeErr != nil {
+			return nil, fmt.Errorf("%w (quarantine PATCH failed: %w)", outcomeErr, err)
+		}
+		return host, nil
 	}
 	return netBoxQuarantineOutcome(deviceID, updated.Device, false)
 }

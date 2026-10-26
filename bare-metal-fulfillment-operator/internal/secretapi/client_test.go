@@ -23,6 +23,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -261,6 +262,10 @@ var _ = Describe("Secret API client", func() {
 			Entry("ignores fragment", "https://secrets.example.test:8001#secrets", "secrets.example.test:8001"),
 		)
 
+		issuerWithUserInfo := url.URL{
+			Scheme: "https", Host: "keycloak.example.test", Path: "/realms/osac",
+			User: url.UserPassword("test-user", "test-password"),
+		}
 		DescribeTable("rejects invalid issuer URLs before reading credentials",
 			func(issuerURL string, wantErr string) {
 				_, err := New(Config{
@@ -274,7 +279,7 @@ var _ = Describe("Secret API client", func() {
 			Entry("requires an issuer", "", "Secret API issuer URL must use HTTPS"),
 			Entry("requires HTTPS", "http://keycloak.example.test/realms/osac", "Secret API issuer URL must use HTTPS"),
 			Entry("requires a host", "https:///realms/osac", "Secret API issuer URL must use HTTPS"),
-			Entry("rejects user info", "https://user:password@keycloak.example.test/realms/osac", "Secret API issuer URL must use HTTPS"),
+			Entry("rejects user info", issuerWithUserInfo.String(), "Secret API issuer URL must use HTTPS"),
 			Entry("rejects query parameters", "https://keycloak.example.test/realms/osac?tenant=shared", "Secret API issuer URL must use HTTPS"),
 			Entry("rejects an empty query", "https://keycloak.example.test/realms/osac?", "Secret API issuer URL must use HTTPS"),
 			Entry("rejects fragments", "https://keycloak.example.test/realms/osac#token", "Secret API issuer URL must use HTTPS"),
