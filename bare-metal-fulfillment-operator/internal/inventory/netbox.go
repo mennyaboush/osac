@@ -430,7 +430,6 @@ func (c *NetBoxClient) deleteNetBoxResources(ctx context.Context, deviceID strin
 	return c.bmhManager.DeleteBMCSecret(ctx, name+bmcSecretSuffix)
 }
 
-// TODO: Confirm BMH and generated Secret absence after DELETE; finalizers can delay removal.
 func (c *NetBoxClient) cleanupAndReleaseNetBoxDevice(ctx context.Context, deviceID, etag string, state netBoxReleaseState) error {
 	if err := c.deleteNetBoxResources(ctx, deviceID); err != nil {
 		return err
