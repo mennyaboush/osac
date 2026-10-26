@@ -46,6 +46,14 @@ const (
 	netBoxAssignmentUnavailable
 )
 
+type netBoxReleaseState uint8
+
+const (
+	netBoxReleaseUnspecified netBoxReleaseState = iota
+	netBoxReleaseComplete
+	netBoxReleaseClaimed
+)
+
 var errNetBoxClientNotImplemented = errors.New("NetBox inventory client is not implemented")
 
 // NetBoxAPI defines the operations needed by the inventory adapter. It is
@@ -371,8 +379,75 @@ func netBoxInstanceOwner(device netboxclient.Device) (string, error) {
 	return owner, nil
 }
 
-func (*NetBoxClient) UnassignHost(_ context.Context, _, _ string, _ []string) error {
-	return errNetBoxClientNotImplemented
+// UnassignHost removes the NetBox claim after requesting BMH and generated Secret deletion.
+func (c *NetBoxClient) UnassignHost(ctx context.Context, inventoryHostID, _ string, _ []string) error {
+	_, deviceID, err := c.parseNetBoxHostID(inventoryHostID)
+	if err != nil {
+		return err
+	}
+	return c.unassignNetBoxDevice(ctx, deviceID)
+}
+
+func (c *NetBoxClient) unassignNetBoxDevice(ctx context.Context, deviceID string) error {
+	snapshot, err := c.readNetBoxDevice(ctx, deviceID)
+	if err != nil {
+		return err
+	}
+	return c.unassignNetBoxSnapshot(ctx, deviceID, snapshot)
+}
+
+func (c *NetBoxClient) unassignNetBoxSnapshot(ctx context.Context, deviceID string, snapshot netboxclient.DeviceSnapshot) error {
+	state, err := classifyNetBoxRelease(snapshot.Device)
+	if err != nil {
+		return err
+	}
+	return c.cleanupAndReleaseNetBoxDevice(ctx, deviceID, snapshot.ETag, state)
+}
+
+func classifyNetBoxRelease(device netboxclient.Device) (netBoxReleaseState, error) {
+	owner, err := netBoxInstanceOwner(device)
+	if err != nil {
+		return netBoxReleaseUnspecified, err
+	}
+	return netBoxReleaseStateFor(device.Status, owner)
+}
+
+func netBoxReleaseStateFor(status, owner string) (netBoxReleaseState, error) {
+	if status == netBoxStatusActive && owner != "" {
+		return netBoxReleaseClaimed, nil
+	}
+	if status != netBoxStatusActive && owner == "" {
+		return netBoxReleaseComplete, nil
+	}
+	return netBoxReleaseUnspecified, errors.New("NetBox device has inconsistent release state")
+}
+
+func (c *NetBoxClient) deleteNetBoxResources(ctx context.Context, deviceID string) error {
+	name := netBoxHostPrefix + deviceID
+	if err := c.bmhManager.DeleteBMH(ctx, name); err != nil {
+		return err
+	}
+	return c.bmhManager.DeleteBMCSecret(ctx, name+bmcSecretSuffix)
+}
+
+// TODO: Confirm BMH and generated Secret absence after DELETE; finalizers can delay removal.
+func (c *NetBoxClient) cleanupAndReleaseNetBoxDevice(ctx context.Context, deviceID, etag string, state netBoxReleaseState) error {
+	if err := c.deleteNetBoxResources(ctx, deviceID); err != nil {
+		return err
+	}
+	if state == netBoxReleaseComplete {
+		return nil
+	}
+	return c.stageNetBoxDevice(ctx, deviceID, etag)
+}
+
+func (c *NetBoxClient) stageNetBoxDevice(ctx context.Context, deviceID, etag string) error {
+	staged := netBoxStatusStaged
+	patch := netboxclient.DevicePatch{
+		Status: &staged, CustomFields: map[string]interface{}{"osac_instance_id": nil},
+	}
+	_, err := c.api.PatchDevice(ctx, deviceID, patch, etag)
+	return err
 }
 
 func (*NetBoxClient) GetHostNICs(_ context.Context, _ string) ([]HostNIC, error) {
