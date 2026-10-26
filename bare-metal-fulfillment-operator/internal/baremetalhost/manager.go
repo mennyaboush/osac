@@ -199,7 +199,7 @@ func (m *Manager) EnsureBMCSecret(ctx context.Context, name, username, password 
 
 // DeleteBMCSecret deletes a BMC credentials Secret by name, but ONLY if it is
 // operator-managed (carries the managed-by label). Admin-created Secrets and
-// missing Secrets are left untouched. Idempotent.
+// missing Secrets are left untouched. Returns an error while deletion is pending.
 func (m *Manager) DeleteBMCSecret(ctx context.Context, name string) error {
 	log := ctrllog.FromContext(ctx)
 
@@ -223,8 +223,16 @@ func (m *Manager) DeleteBMCSecret(ctx context.Context, name string) error {
 		}
 		return fmt.Errorf("failed to delete BMC credentials Secret %s/%s: %w", m.namespace, name, err)
 	}
-	log.Info("Deleted operator-managed BMC credentials Secret", "name", name, "namespace", m.namespace)
-	return nil
+	log.Info("Requested deletion of operator-managed BMC credentials Secret", "name", name, "namespace", m.namespace)
+	return m.confirmBMCSecretDeletion(ctx, name)
+}
+
+func (m *Manager) confirmBMCSecretDeletion(ctx context.Context, name string) error {
+	err := m.secretClient.Get(ctx, client.ObjectKey{Namespace: m.namespace, Name: name}, &corev1.Secret{})
+	if err == nil {
+		return fmt.Errorf("BMC credentials Secret %s/%s deletion is pending", m.namespace, name)
+	}
+	return client.IgnoreNotFound(err)
 }
 
 // DeleteBMH deletes a BareMetalHost CR by name. Idempotent — ignores NotFound.

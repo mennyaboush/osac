@@ -54,7 +54,10 @@ const (
 	netBoxReleaseClaimed
 )
 
-var errNetBoxClientNotImplemented = errors.New("NetBox inventory client is not implemented")
+var (
+	errNetBoxClientNotImplemented = errors.New("NetBox inventory client is not implemented")
+	errNetBoxBMHDeletionPending   = errors.New("NetBox BareMetalHost deletion is pending")
+)
 
 // NetBoxAPI defines the operations needed by the inventory adapter. It is
 // satisfied by netboxclient.Client and keeps generated SDK calls behind a
@@ -379,7 +382,7 @@ func netBoxInstanceOwner(device netboxclient.Device) (string, error) {
 	return owner, nil
 }
 
-// UnassignHost removes the NetBox claim after requesting BMH and generated Secret deletion.
+// UnassignHost removes the NetBox claim after BMH and generated Secret deletion completes.
 func (c *NetBoxClient) UnassignHost(ctx context.Context, inventoryHostID, _ string, _ []string) error {
 	_, deviceID, err := c.parseNetBoxHostID(inventoryHostID)
 	if err != nil {
@@ -424,10 +427,25 @@ func netBoxReleaseStateFor(status, owner string) (netBoxReleaseState, error) {
 
 func (c *NetBoxClient) deleteNetBoxResources(ctx context.Context, deviceID string) error {
 	name := netBoxHostPrefix + deviceID
-	if err := c.bmhManager.DeleteBMH(ctx, name); err != nil {
+	if err := c.deleteNetBoxBMH(ctx, name); err != nil {
 		return err
 	}
 	return c.bmhManager.DeleteBMCSecret(ctx, name+bmcSecretSuffix)
+}
+
+func (c *NetBoxClient) deleteNetBoxBMH(ctx context.Context, name string) error {
+	if err := c.bmhManager.DeleteBMH(ctx, name); err != nil {
+		return err
+	}
+	return c.confirmNetBoxBMHDeletion(ctx, name)
+}
+
+func (c *NetBoxClient) confirmNetBoxBMHDeletion(ctx context.Context, name string) error {
+	exists, err := c.bmhManager.BMHExists(ctx, name)
+	if err != nil || !exists {
+		return err
+	}
+	return errNetBoxBMHDeletionPending
 }
 
 func (c *NetBoxClient) cleanupAndReleaseNetBoxDevice(ctx context.Context, deviceID, etag string, state netBoxReleaseState) error {
