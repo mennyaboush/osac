@@ -188,20 +188,18 @@ var _ = Describe("BareMetalInstance IP Discovery", func() {
 				Expect(k8sClient.Delete(ctx, bmi)).To(Succeed())
 			})
 
-			It("passes logical port MACs when triggering and does not look them up while polling", func() {
-				lookupCalls := 0
+			It("passes inventory logical port MACs to the DHCP job when management is unset", func() {
+				lookupCalled := false
 				inventoryClient.getHostLogicalPortMACsFunc = func(_ context.Context, hostID string) (map[string]string, error) {
-					lookupCalls++
+					lookupCalled = true
 					Expect(hostID).To(Equal(bmi.Spec.ExternalHostID))
 					return map[string]string{"data-0": "52:54:00:16:04:83"}, nil
 				}
 				_, err := reconciler.reconcileIPDiscovery(ctx, bmi)
 				Expect(err).NotTo(HaveOccurred())
+				Expect(lookupCalled).To(BeTrue())
 				Expect(jobTriggered).To(BeTrue())
 				Expect(jobMACs).To(Equal(map[string]string{"subnet-1": "52:54:00:16:04:83"}))
-				_, err = reconciler.reconcileIPDiscovery(ctx, bmi)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(lookupCalls).To(Equal(1))
 			})
 
 			DescribeTable("preserves name-based matching",
