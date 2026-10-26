@@ -52,18 +52,35 @@ type ipDiscoveryMACProvider struct {
 }
 
 func (p *ipDiscoveryMACProvider) TriggerProvision(ctx context.Context, resource client.Object) (*provisioning.ProvisionResult, error) {
-	bareMetalInstance, ok := resource.(*v1alpha1.BareMetalInstance)
-	if ok && p.inventoryClient != nil && bareMetalInstance.Spec.ExternalHostID != "" {
-		ifaceMACs, err := p.inventoryClient.GetHostLogicalPortMACs(ctx, bareMetalInstance.Spec.ExternalHostID)
-		if err != nil {
-			logf.FromContext(ctx).Error(err, "Failed to resolve host interface MACs; falling back to name-based lease matching",
-				"host", bareMetalInstance.Spec.ExternalHostID)
-		} else if subnetMACs := buildSubnetMACMap(bareMetalInstance.Spec.NetworkAttachments, ifaceMACs); len(subnetMACs) > 0 {
-			ctx = provisioning.WithNetworkAttachmentMACs(ctx, subnetMACs)
-		}
+	if bmi, ok := resource.(*v1alpha1.BareMetalInstance); ok && bmi.Spec.ExternalHostID != "" {
+		ctx = p.networkMACContext(ctx, bmi)
 	}
-
 	return p.ProvisioningProvider.TriggerProvision(ctx, resource)
+}
+
+func (p *ipDiscoveryMACProvider) networkMACContext(ctx context.Context, bmi *v1alpha1.BareMetalInstance) context.Context {
+	ifaceMACs, err := p.inventoryClient.GetHostLogicalPortMACs(ctx, bmi.Spec.ExternalHostID)
+	if err != nil {
+		logMACLookupError(ctx, bmi.Spec.ExternalHostID, err)
+		return ctx
+	}
+	return withNetworkAttachmentMACs(ctx, bmi.Spec.NetworkAttachments, ifaceMACs)
+}
+
+func logMACLookupError(ctx context.Context, hostID string, err error) {
+	logf.FromContext(ctx).Error(
+		err,
+		"Failed to resolve host interface MACs; falling back to name-based lease matching",
+		"host", hostID,
+	)
+}
+
+func withNetworkAttachmentMACs(ctx context.Context, attachments []v1alpha1.BareMetalNetworkAttachment, ifaceMACs map[string]string) context.Context {
+	subnetMACs := buildSubnetMACMap(attachments, ifaceMACs)
+	if len(subnetMACs) == 0 {
+		return ctx
+	}
+	return provisioning.WithNetworkAttachmentMACs(ctx, subnetMACs)
 }
 
 func (r *BareMetalInstanceReconciler) reconcileIPDiscovery(
@@ -259,28 +276,19 @@ func (r *BareMetalInstanceReconciler) applyIPDiscoveryResults(
 	return nil
 }
 
-// buildSubnetMACMap maps each attachment's SubnetRef to the MAC address of its NIC,
-// resolved from the host's interface-name → MAC mapping. When an attachment has no
-// Interface set and the host exposes exactly one interface, that MAC is used (the
-// single-NIC case). Attachments whose MAC cannot be resolved are omitted, so the role
-// falls back to name-based matching for them.
-func buildSubnetMACMap(
-	attachments []v1alpha1.BareMetalNetworkAttachment,
-	ifaceMACs map[string]string,
-) map[string]string {
-	subnetMACs := make(map[string]string)
+// buildSubnetMACMap resolves attachment interface names to DHCP MACs.
+func buildSubnetMACMap(attachments []v1alpha1.BareMetalNetworkAttachment, ifaceMACs map[string]string) map[string]string {
+	subnetMACs := make(map[string]string, len(attachments))
 	for _, na := range attachments {
-		mac := ifaceMACs[na.Interface]
-		if mac == "" && na.Interface == "" && len(ifaceMACs) == 1 {
-			for _, only := range ifaceMACs {
-				mac = only
-			}
-		}
-		if mac != "" {
-			subnetMACs[na.SubnetRef] = mac
-		}
+		addSubnetMAC(subnetMACs, na, ifaceMACs)
 	}
 	return subnetMACs
+}
+
+func addSubnetMAC(subnetMACs map[string]string, attachment v1alpha1.BareMetalNetworkAttachment, ifaceMACs map[string]string) {
+	if mac := ifaceMACs[attachment.Interface]; mac != "" {
+		subnetMACs[attachment.SubnetRef] = mac
+	}
 }
 
 // initNetworkAttachmentStatuses ensures statuses exist for all attachments and syncs

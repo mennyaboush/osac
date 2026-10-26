@@ -22,8 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net"
-	"strconv"
 	"strings"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
@@ -54,7 +52,6 @@ var errNetBoxClientNotImplemented = errors.New("NetBox inventory client is not i
 // consumer-side interface.
 type NetBoxAPI interface {
 	ForEachDevice(ctx context.Context, query netboxclient.DeviceQuery, visit func(netboxclient.Device) (bool, error)) error
-	ForEachDeviceInterface(ctx context.Context, deviceID string, visit func(netboxclient.DeviceInterface) (bool, error)) error
 	ForEachDeviceCustomField(ctx context.Context, visit func(netboxclient.CustomField) (bool, error)) error
 	GetDevice(ctx context.Context, id string) (netboxclient.DeviceSnapshot, error)
 	PatchDevice(ctx context.Context, id string, patch netboxclient.DevicePatch, etag string) (netboxclient.DeviceSnapshot, error)
@@ -221,14 +218,10 @@ func (c *NetBoxClient) parseNetBoxHostID(inventoryHostID string) (string, string
 	if deviceID == "" {
 		return "", "", errors.New("invalid NetBox inventory host ID")
 	}
-	if c.bmhManager == nil {
+	if c.bmhManager == nil || c.bmhManager.Namespace() == "" {
 		return "", "", errors.New("NetBox inventory requires a Metal3 namespace")
 	}
-	configuredNamespace := c.bmhManager.Namespace()
-	if configuredNamespace == "" {
-		return "", "", errors.New("NetBox inventory requires a Metal3 namespace")
-	}
-	if namespace != configuredNamespace {
+	if namespace != c.bmhManager.Namespace() {
 		return "", "", errors.New("NetBox inventory host ID is outside the Metal3 namespace")
 	}
 	return namespace, deviceID, nil
@@ -364,133 +357,74 @@ func (*NetBoxClient) UnassignHost(_ context.Context, _ string, _ []string) error
 	return errNetBoxClientNotImplemented
 }
 
-func (c *NetBoxClient) parseNetBoxNICHostID(inventoryHostID string) (string, string, error) {
-	if c == nil {
-		return "", "", errors.New("NetBox inventory client is required")
-	}
-
+// GetHostNICs reads inspected NICs from the allocated BareMetalHost.
+func (c *NetBoxClient) GetHostNICs(ctx context.Context, inventoryHostID string) ([]HostNIC, error) {
 	_, deviceID, err := c.parseNetBoxHostID(inventoryHostID)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	numericID, err := strconv.ParseInt(deviceID, 10, 32)
-	if err != nil || numericID <= 0 || strconv.FormatInt(numericID, 10) != deviceID {
-		return "", "", fmt.Errorf("NetBox inventory host name must contain a canonical positive device ID")
-	}
-
-	return netBoxHostPrefix + deviceID, deviceID, nil
+	return c.readHostNICs(ctx, netBoxHostPrefix+deviceID)
 }
 
-func (c *NetBoxClient) GetHostNICs(ctx context.Context, inventoryHostID string) ([]HostNIC, error) {
-	bmhName, _, err := c.parseNetBoxNICHostID(inventoryHostID)
-	if err != nil {
-		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
+func (c *NetBoxClient) readHostNICs(ctx context.Context, bmhName string) ([]HostNIC, error) {
 	macs, err := c.bmhManager.GetHardwareNICs(ctx, bmhName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read inspected NICs for NetBox host %q: %w", bmhName, err)
+		return nil, err
 	}
-
 	return hostNICsFromMACs(macs), nil
 }
 
 func hostNICsFromMACs(macs []string) []HostNIC {
-	var nics []HostNIC
-	for _, mac := range macs {
-		if mac == "" {
-			continue
-		}
-		nics = append(nics, HostNIC{MAC: strings.ToLower(mac)})
+	if len(macs) == 0 {
+		return nil
 	}
+	nics := make([]HostNIC, len(macs))
+	populateHostNICs(nics, macs)
 	return nics
 }
 
-// GetHostLogicalPortMACs resolves logical port names from native NetBox interfaces.
+func populateHostNICs(nics []HostNIC, macs []string) {
+	for i, mac := range macs {
+		nics[i] = HostNIC{MAC: strings.ToLower(mac)}
+	}
+}
+
+// GetHostLogicalPortMACs reads the optional mapping from the NetBox device.
 func (c *NetBoxClient) GetHostLogicalPortMACs(ctx context.Context, inventoryHostID string) (map[string]string, error) {
-	_, deviceID, err := c.parseNetBoxNICHostID(inventoryHostID)
+	_, deviceID, err := c.parseNetBoxHostID(inventoryHostID)
 	if err != nil {
 		return nil, err
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("NetBox logical MAC lookup cancelled: %w", err)
-	}
-	if c.api == nil {
-		return nil, errors.New("NetBox API is required for logical MAC lookup")
-	}
-
-	result := make(map[string]string)
-	seen := make(map[string]string)
-	err = c.api.ForEachDeviceInterface(ctx, deviceID, func(iface netboxclient.DeviceInterface) (bool, error) {
-		if err := ctx.Err(); err != nil {
-			return false, err
-		}
-		if err := addNetBoxLogicalPortMAC(result, seen, iface); err != nil {
-			return false, err
-		}
-		return true, nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve logical MACs from NetBox: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("NetBox logical MAC lookup cancelled: %w", err)
-	}
-
-	return result, nil
+	return c.readHostLogicalPortMACs(ctx, deviceID)
 }
 
-func netBoxLogicalPortName(iface netboxclient.DeviceInterface) (string, error) {
-	if rawAlias, exists := iface.CustomFields["osac_logical_port"]; exists && rawAlias != nil {
-		alias, ok := rawAlias.(string)
-		if !ok {
-			return "", fmt.Errorf("NetBox interface %q has a non-text osac_logical_port alias", iface.ID)
-		}
-		if alias != "" {
-			if strings.TrimSpace(alias) != alias {
-				return "", fmt.Errorf("NetBox interface %q has whitespace around osac_logical_port", iface.ID)
-			}
-			return alias, nil
-		}
+func (c *NetBoxClient) readHostLogicalPortMACs(ctx context.Context, deviceID string) (map[string]string, error) {
+	snapshot, err := c.readNetBoxDevice(ctx, deviceID)
+	if err != nil {
+		return nil, err
 	}
-
-	if iface.Name == "" || strings.TrimSpace(iface.Name) != iface.Name {
-		return "", fmt.Errorf("NetBox interface %q has an invalid native name", iface.ID)
-	}
-	return iface.Name, nil
+	return netBoxInterfaceMACs(snapshot.Device.CustomFields["osac_interface_macs"])
 }
 
-func normalizeNetBoxInterfaceMAC(raw string) (string, error) {
-	if raw == "" {
-		return "", nil
+func netBoxInterfaceMACs(value interface{}) (map[string]string, error) {
+	if value == nil {
+		return map[string]string{}, nil
 	}
-	mac, err := net.ParseMAC(raw)
-	if err != nil || len(mac) != 6 {
-		return "", errors.New("invalid 48-bit MAC address")
-	}
-	return mac.String(), nil
+	return decodeNetBoxInterfaceMACs(value)
 }
 
-func addNetBoxLogicalPortMAC(result map[string]string, seen map[string]string, iface netboxclient.DeviceInterface) error {
-	logicalName, err := netBoxLogicalPortName(iface)
+func decodeNetBoxInterfaceMACs(value interface{}) (map[string]string, error) {
+	raw, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if previousID, exists := seen[logicalName]; exists {
-		return fmt.Errorf("NetBox interfaces %q and %q resolve to the same logical port", previousID, iface.ID)
-	}
-	seen[logicalName] = iface.ID
+	return parseNetBoxInterfaceMACs(raw)
+}
 
-	mac, err := normalizeNetBoxInterfaceMAC(iface.PrimaryMAC)
-	if err != nil {
-		return fmt.Errorf("NetBox interface %q has an invalid primary MAC: %w", iface.ID, err)
+func parseNetBoxInterfaceMACs(raw []byte) (map[string]string, error) {
+	macs := map[string]string{}
+	if err := json.Unmarshal(raw, &macs); err != nil {
+		return nil, err
 	}
-	if mac == "" {
-		return nil
-	}
-	result[logicalName] = mac
-	return nil
+	return macs, nil
 }
