@@ -320,11 +320,7 @@ func (c *Client) ListDeviceInterfaces(ctx context.Context, id string) ([]DeviceI
 	var interfaces []DeviceInterface
 	var offset int32
 	for {
-		currentOffset := offset
-		page, _, err := retryGET(ctx, func(requestContext context.Context) (*netbox.PaginatedInterfaceList, *http.Response, error) {
-			return c.api.DcimAPI.DcimInterfacesList(requestContext).
-				DeviceId([]int32{deviceID}).Limit(defaultPageSize).Offset(currentOffset).Execute()
-		})
+		page, _, err := c.listInterfacePage(ctx, deviceID, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -333,11 +329,7 @@ func (c *Client) ListDeviceInterfaces(ctx context.Context, id string) ([]DeviceI
 		}
 
 		for _, value := range page.Results {
-			mac := ""
-			if primary := value.PrimaryMacAddress.Get(); primary != nil {
-				mac = primary.GetMacAddress()
-			}
-			interfaces = append(interfaces, DeviceInterface{Name: value.Name, PrimaryMAC: mac})
+			interfaces = append(interfaces, fromSDKInterface(value))
 		}
 
 		hasNext := page.GetNext() != ""
@@ -349,6 +341,13 @@ func (c *Client) ListDeviceInterfaces(ctx context.Context, id string) ([]DeviceI
 			return nil, err
 		}
 	}
+}
+
+func (c *Client) listInterfacePage(ctx context.Context, deviceID, offset int32) (*netbox.PaginatedInterfaceList, *http.Response, error) {
+	return retryGET(ctx, func(requestContext context.Context) (*netbox.PaginatedInterfaceList, *http.Response, error) {
+		return c.api.DcimAPI.DcimInterfacesList(requestContext).
+			DeviceId([]int32{deviceID}).Limit(defaultPageSize).Offset(offset).Execute()
+	})
 }
 
 // PatchDevice sends one conditional PATCH. A missing or invalid ETag fails
@@ -528,6 +527,14 @@ func fromSDKDevice(device netbox.DeviceWithConfigContext) Device {
 		Status:       status,
 		CustomFields: cloneCustomFields(device.CustomFields),
 	}
+}
+
+func fromSDKInterface(value netbox.Interface) DeviceInterface {
+	result := DeviceInterface{Name: value.Name}
+	if primary := value.PrimaryMacAddress.Get(); primary != nil {
+		result.PrimaryMAC = primary.GetMacAddress()
+	}
+	return result
 }
 
 func cloneCustomFields(fields map[string]interface{}) map[string]interface{} {

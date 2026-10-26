@@ -385,34 +385,50 @@ func (c *NetBoxClient) GetHostLogicalPortMACs(ctx context.Context, inventoryHost
 		return nil, errNetBoxClientNotImplemented
 	}
 
-	interfaces, interfaceErr := c.api.ListDeviceInterfaces(ctx, deviceID)
+	macs, interfaceErr := c.nativeLogicalPortMACs(ctx, deviceID)
+	if interfaceErr == nil && len(macs) > 0 {
+		return macs, nil
+	}
+	macs, fallbackErr := c.customFieldLogicalPortMACs(ctx, deviceID)
+	if fallbackErr != nil {
+		return nil, errors.Join(interfaceErr, fallbackErr)
+	}
+	if len(macs) == 0 {
+		return nil, errors.Join(interfaceErr, errors.New("NetBox device has no interface MAC mapping"))
+	}
+	return macs, nil
+}
+
+func (c *NetBoxClient) nativeLogicalPortMACs(ctx context.Context, deviceID string) (map[string]string, error) {
+	interfaces, err := c.api.ListDeviceInterfaces(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
 	macs := make(map[string]string, len(interfaces))
 	for _, iface := range interfaces {
 		if iface.PrimaryMAC != "" {
 			macs[iface.Name] = iface.PrimaryMAC
 		}
 	}
-	if len(macs) > 0 {
-		return macs, nil
-	}
+	return macs, nil
+}
 
+func (c *NetBoxClient) customFieldLogicalPortMACs(ctx context.Context, deviceID string) (map[string]string, error) {
 	snapshot, err := c.readNetBoxDevice(ctx, deviceID)
 	if err != nil {
-		return nil, errors.Join(interfaceErr, err)
+		return nil, err
 	}
 	value := snapshot.Device.CustomFields["osac_interface_macs"]
-	if value != nil {
-		raw, err := json.Marshal(value)
-		if err != nil {
-			return nil, err
-		}
-		macs = map[string]string{}
-		if err := json.Unmarshal(raw, &macs); err != nil {
-			return nil, err
-		}
-		if len(macs) > 0 {
-			return macs, nil
-		}
+	if value == nil {
+		return nil, nil
 	}
-	return nil, errors.Join(interfaceErr, errors.New("NetBox device has no interface MAC mapping"))
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	macs := map[string]string{}
+	if err := json.Unmarshal(raw, &macs); err != nil {
+		return nil, err
+	}
+	return macs, nil
 }

@@ -598,6 +598,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 		manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
 		manager.EXPECT().Namespace().Return("baremetal").Times(2)
 		api := &selectorQueryTestAPI{
+			interfaces:   []netboxclient.DeviceInterface{{Name: "native", PrimaryMAC: "52:54:00:00:00:01"}},
 			interfaceErr: errors.New("interface lookup failed"),
 			deviceSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{
 				ID: "42",
