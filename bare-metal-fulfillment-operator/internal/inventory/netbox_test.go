@@ -27,6 +27,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
+	"go.uber.org/mock/gomock"
 
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/baremetalhost"
 	"github.com/osac-project/osac/bare-metal-fulfillment-operator/internal/netboxclient"
@@ -35,6 +36,13 @@ import (
 )
 
 const testNetBoxHostClass = "metal3"
+
+func testNetBoxCredentials() *BMCCredentials {
+	return &BMCCredentials{
+		Username: []byte("bmc-user"),
+		Password: []byte("source-password"),
+	}
+}
 
 var _ = Describe("NetBox inventory client", func() {
 	Describe("GetHostLogicalPortMACs", func() {
@@ -97,13 +105,14 @@ var _ = Describe("NetBox inventory client", func() {
 			Expect(api).NotTo(BeNil())
 
 			manager := baremetalhost.NewManager(nil, nil, "metal3-system")
-			client := NewNetBoxClient(api, manager, testNetBoxHostClass, nil)
+			credentialsReader := &fakeCredentialsReaderRepository{}
+			client := NewNetBoxClient(api, manager, testNetBoxHostClass, credentialsReader)
 
 			Expect(client.api).To(BeIdenticalTo(api))
 			Expect(client.bmhManager).To(BeIdenticalTo(manager))
 			Expect(client.bmhManager.Namespace()).To(Equal("metal3-system"))
 			Expect(client.hostClass).To(Equal(testNetBoxHostClass))
-			Expect(client.credentialResolver).NotTo(BeNil())
+			Expect(client.credentialsReader).To(BeIdenticalTo(credentialsReader))
 		})
 	})
 
@@ -225,32 +234,47 @@ func (a *selectorQueryTestAPI) PatchDevice(
 	return a.patchSnapshot, a.patchErr
 }
 
-type fakeDeviceCredentialResolver struct {
-	credentials *NetBoxCredentials
+type fakeCredentialsReaderRepository struct {
+	credentials *BMCCredentials
 	err         error
 	calls       int
-	device      netboxclient.Device
+	hostID      string
 	onResolve   func()
 }
 
-func (r *fakeDeviceCredentialResolver) Resolve(_ context.Context, device netboxclient.Device) (*NetBoxCredentials, error) {
+func (r *fakeCredentialsReaderRepository) GetCredentials(_ context.Context, hostID string) (*BMCCredentials, error) {
 	r.calls++
-	r.device = device
+	r.hostID = hostID
 	if r.onResolve != nil {
 		r.onResolve()
 	}
 	return r.credentials, r.err
 }
 
-func newTestNetBoxClient(api NetBoxAPI, resolver DeviceCredentialResolver) *NetBoxClient {
-	client := NewNetBoxClient(api, testNetBoxSelectorBMHManager(), testNetBoxHostClass, nil)
-	client.credentialResolver = resolver
-	return client
+func (*fakeCredentialsReaderRepository) Close() error {
+	return nil
+}
+
+func newTestNetBoxClient(api NetBoxAPI, resolver CredentialsReaderRepository) *NetBoxClient {
+	ctrl := gomock.NewController(GinkgoT())
+	manager := baremetalhost.NewMockBMHLifecycleManager(ctrl)
+	manager.EXPECT().Namespace().Return("metal3-system").AnyTimes()
+	manager.EXPECT().EnsureBMCSecret(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	manager.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	manager.EXPECT().IsBMHReady(gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+	return newTestNetBoxClientWithManager(api, resolver, manager)
+}
+
+func newTestNetBoxClientWithManager(api NetBoxAPI, resolver CredentialsReaderRepository, manager baremetalhost.BMHLifecycleManager) *NetBoxClient {
+	return NewNetBoxClient(api, manager, testNetBoxHostClass, resolver)
 }
 
 func newTestNetBoxClientWithCredentials(api NetBoxAPI) *NetBoxClient {
-	return newTestNetBoxClient(api, &fakeDeviceCredentialResolver{
-		credentials: &NetBoxCredentials{Username: []byte("user"), Password: []byte("pass")},
+	return newTestNetBoxClient(api, &fakeCredentialsReaderRepository{
+		credentials: &BMCCredentials{
+			Username: []byte("user"),
+			Password: []byte("pass"),
+		},
 	})
 }
 
@@ -388,7 +412,7 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		claimedDevice := testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123")
 		claimedDevice.Device.CustomFields["osac_managed"] = false
 		api := &selectorQueryTestAPI{deviceSnapshot: freeDevice, patchSnapshot: claimedDevice}
-		client := newTestNetBoxClient(api, &fakeDeviceCredentialResolver{})
+		client := newTestNetBoxClient(api, &fakeCredentialsReaderRepository{credentials: testNetBoxCredentials()})
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -416,7 +440,44 @@ var _ = Describe("NetBox assignment eligibility", func() {
 			deviceSnapshot: freeDevice,
 			patchSnapshot:  testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
 		}
-		client := newTestNetBoxClientWithCredentials(api)
+		resolver := &fakeCredentialsReaderRepository{credentials: testNetBoxCredentials()}
+		resolver.onResolve = func() { Expect(api.patchCalls).To(BeZero()) }
+		manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
+		manager.EXPECT().Namespace().Return("metal3-system").AnyTimes()
+		secretEnsured := false
+		bmhCreated := false
+		ensureCall := manager.EXPECT().EnsureBMCSecret(gomock.Any(), "netbox-46-bmc-secret", "bmc-user", "source-password").DoAndReturn(
+			func(_ context.Context, name, username, password string) error {
+				Expect(api.patchCalls).To(Equal(1))
+				Expect(name).To(Equal("netbox-46-bmc-secret"))
+				Expect(username).To(Equal("bmc-user"))
+				Expect(password).To(Equal("source-password"))
+				secretEnsured = true
+				return nil
+			})
+		createCall := manager.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, params baremetalhost.CreateParams) error {
+				Expect(secretEnsured).To(BeTrue())
+				Expect(params.Name).To(Equal("netbox-46"))
+				Expect(params.BMCAddress).To(Equal("redfish-virtualmedia+https://192.0.2.46/redfish/v1/Systems/1"))
+				Expect(params.CredentialsSecret).To(Equal("netbox-46-bmc-secret"))
+				Expect(params.BootMACAddress).To(Equal("aa:bb:cc:dd:ee:46"))
+				Expect(params.ConsumerRef).NotTo(BeNil())
+				Expect(params.ConsumerRef.APIVersion).To(Equal("osac.openshift.io/v1alpha1"))
+				Expect(params.ConsumerRef.Kind).To(Equal("BareMetalInstance"))
+				Expect(params.ConsumerRef.Name).To(Equal("bmi-123"))
+				Expect(params.ConsumerRef.Namespace).To(BeEmpty())
+				Expect(params.Labels).To(Equal(map[string]string{Metal3ManagedByLabel: shared.OsacDefaultManagedByValue}))
+				bmhCreated = true
+				return nil
+			})
+		readinessCall := manager.EXPECT().IsBMHReady(gomock.Any(), "netbox-46").DoAndReturn(
+			func(context.Context, string) (bool, error) {
+				Expect(bmhCreated).To(BeTrue())
+				return true, nil
+			})
+		gomock.InOrder(ensureCall, createCall, readinessCall)
+		client := newTestNetBoxClientWithManager(api, resolver, manager)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -429,6 +490,10 @@ var _ = Describe("NetBox assignment eligibility", func() {
 		Expect(api.patch.Status).NotTo(BeNil())
 		Expect(*api.patch.Status).To(Equal(netBoxStatusActive))
 		Expect(api.patch.CustomFields).To(Equal(map[string]interface{}{"osac_instance_id": "bmi-123"}))
+		Expect(api.patch.CustomFields).NotTo(HaveKey("username"))
+		Expect(api.patch.CustomFields).NotTo(HaveKey("password"))
+		Expect(resolver.calls).To(Equal(1))
+		Expect(host.Ready).To(BeTrue())
 	})
 
 	It("returns an existing assignment without patching the device", func() {
@@ -527,14 +592,123 @@ var _ = Describe("NetBox assignment eligibility", func() {
 	)
 })
 
+var _ = Describe("NetBox Metal3 preparation", func() {
+	It("returns not ready without an error when Metal3 readiness is false", func() {
+		api := &selectorQueryTestAPI{deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123")}
+		manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
+		manager.EXPECT().Namespace().Return("metal3-system").AnyTimes()
+		ensureCall := manager.EXPECT().EnsureBMCSecret(gomock.Any(), "netbox-46-bmc-secret", "bmc-user", "source-password").Return(nil)
+		createCall := manager.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
+		readinessCall := manager.EXPECT().IsBMHReady(gomock.Any(), "netbox-46").Return(false, nil)
+		gomock.InOrder(ensureCall, createCall, readinessCall)
+		client := newTestNetBoxClientWithManager(api, &fakeCredentialsReaderRepository{credentials: testNetBoxCredentials()}, manager)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(host).NotTo(BeNil())
+		Expect(host.Ready).To(BeFalse())
+		Expect(api.patchCalls).To(BeZero())
+	})
+
+	DescribeTable("returns preparation failures without compensating the confirmed NetBox claim",
+		func(failureStage, wantError string) {
+			api := &selectorQueryTestAPI{
+				deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""),
+				patchSnapshot:  testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
+			}
+			manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
+			manager.EXPECT().Namespace().Return("metal3-system").AnyTimes()
+			var orderedCalls []*gomock.Call
+			secretCall := manager.EXPECT().EnsureBMCSecret(gomock.Any(), "netbox-46-bmc-secret", "bmc-user", "source-password")
+			if failureStage == "secret" {
+				secretCall.Return(errors.New("secret operation failed"))
+				orderedCalls = append(orderedCalls, secretCall)
+			} else {
+				secretCall.Return(nil)
+				orderedCalls = append(orderedCalls, secretCall)
+				createCall := manager.EXPECT().CreateBMH(gomock.Any(), gomock.Any())
+				if failureStage == "bmh" {
+					createCall.Return(errors.New("BMH operation failed"))
+					orderedCalls = append(orderedCalls, createCall)
+				} else {
+					createCall.Return(nil)
+					orderedCalls = append(orderedCalls, createCall)
+					readinessCall := manager.EXPECT().IsBMHReady(gomock.Any(), "netbox-46").Return(false, errors.New("readiness operation failed"))
+					orderedCalls = append(orderedCalls, readinessCall)
+				}
+			}
+			orderedCallArgs := make([]any, len(orderedCalls))
+			for i, call := range orderedCalls {
+				orderedCallArgs[i] = call
+			}
+			gomock.InOrder(orderedCallArgs...)
+			resolver := &fakeCredentialsReaderRepository{credentials: testNetBoxCredentials()}
+			client := newTestNetBoxClientWithManager(api, resolver, manager)
+
+			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+			Expect(host).To(BeNil())
+			Expect(err).To(MatchError(ContainSubstring(wantError)))
+			Expect(err.Error()).NotTo(ContainSubstring("bmc-user"))
+			Expect(err.Error()).NotTo(ContainSubstring("source-password"))
+			Expect(resolver.calls).To(Equal(1))
+			Expect(api.patchCalls).To(Equal(1))
+			Expect(api.patch.CustomFields).To(Equal(map[string]interface{}{"osac_instance_id": "bmi-123"}))
+		},
+		Entry("Secret failure", "secret", "failed to ensure BMC credentials Secret for NetBox host"),
+		Entry("BMH failure", "bmh", "failed to create BareMetalHost for NetBox host"),
+		Entry("readiness failure", "readiness", "failed to check BareMetalHost readiness for NetBox host"),
+	)
+
+	It("retries preparation for the persisted same-owner allocation without another claim PATCH", func() {
+		api := &selectorQueryTestAPI{
+			deviceSnapshots: []netboxclient.DeviceSnapshot{
+				testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""),
+				testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
+			},
+			patchSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123"),
+		}
+		manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
+		manager.EXPECT().Namespace().Return("metal3-system").AnyTimes()
+		var ensureCalls int
+		ensureCall := manager.EXPECT().EnsureBMCSecret(gomock.Any(), "netbox-46-bmc-secret", "bmc-user", "source-password").DoAndReturn(
+			func(context.Context, string, string, string) error {
+				ensureCalls++
+				if ensureCalls == 1 {
+					return errors.New("temporary Secret operation failure")
+				}
+				return nil
+			}).Times(2)
+		createCall := manager.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).Return(nil)
+		readinessCall := manager.EXPECT().IsBMHReady(gomock.Any(), "netbox-46").Return(true, nil)
+		gomock.InOrder(ensureCall, createCall, readinessCall)
+		resolver := &fakeCredentialsReaderRepository{credentials: testNetBoxCredentials()}
+		client := newTestNetBoxClientWithManager(api, resolver, manager)
+
+		firstHost, firstErr := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+		secondHost, secondErr := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(firstHost).To(BeNil())
+		Expect(firstErr).To(MatchError(ContainSubstring("failed to ensure BMC credentials Secret for NetBox host")))
+		Expect(secondErr).NotTo(HaveOccurred())
+		Expect(secondHost).To(Equal(expectedTestNetBoxAssignedHost("bmi-123")))
+		Expect(resolver.calls).To(Equal(2))
+		Expect(api.deviceReadIDs).To(Equal([]string{"46", "46"}))
+		Expect(api.patchCalls).To(Equal(1))
+	})
+})
+
 func testNetBoxAssignmentSnapshot(status, instanceID string) netboxclient.DeviceSnapshot {
 	return netboxclient.DeviceSnapshot{
 		Device: netboxclient.Device{
 			ID:     "46",
 			Status: status,
 			CustomFields: map[string]interface{}{
-				"osac_managed":     true,
-				"osac_instance_id": instanceID,
+				"osac_managed":        true,
+				"osac_instance_id":    instanceID,
+				netBoxBMCAddressField: "redfish-virtualmedia+https://192.0.2.46/redfish/v1/Systems/1",
+				netBoxBootMACField:    "aa:bb:cc:dd:ee:46",
 			},
 		},
 		ETag: `W/"device-revision-1"`,
@@ -570,8 +744,8 @@ var _ = Describe("NetBox assignment credential checks", func() {
 				},
 			}},
 		}
-		resolver := &fakeDeviceCredentialResolver{
-			credentials: &NetBoxCredentials{Username: []byte("bmc-user"), Password: []byte("source-password")},
+		resolver := &fakeCredentialsReaderRepository{
+			credentials: testNetBoxCredentials(),
 		}
 		resolver.onResolve = func() { Expect(api.patchCalls).To(BeZero()) }
 		client := newTestNetBoxClient(api, resolver)
@@ -582,7 +756,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(host).NotTo(BeNil())
 		Expect(host.BareMetalInstanceID).To(Equal("bmi-123"))
 		Expect(resolver.calls).To(Equal(1))
-		Expect(resolver.device.ID).To(Equal("46"))
+		Expect(resolver.hostID).To(Equal("46"))
 		Expect(api.deviceReadCalls).To(Equal(1))
 		Expect(api.patchCalls).To(Equal(1))
 		Expect(api.patchDeviceID).To(Equal("46"))
@@ -594,13 +768,33 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(api.patch.CustomFields).NotTo(HaveKey("password"))
 	})
 
+	It("validates NetBox connection data before resolving credentials", func() {
+		device := stagedManagedDeviceSnapshot(`W/"device-revision-1"`)
+		delete(device.Device.CustomFields, netBoxBMCAddressField)
+		api := &selectorQueryTestAPI{
+			deviceSnapshot: device,
+			patchSnapshot:  testNetBoxAssignmentSnapshot("failed", ""),
+		}
+		resolver := &fakeCredentialsReaderRepository{credentials: testNetBoxCredentials()}
+		client := newTestNetBoxClient(api, resolver)
+
+		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(host).To(BeNil())
+		Expect(resolver.calls).To(BeZero())
+		Expect(api.patchCalls).To(Equal(1))
+		Expect(api.patch.Status).NotTo(BeNil())
+		Expect(*api.patch.Status).To(Equal("failed"))
+	})
+
 	DescribeTable("quarantines deterministic credential errors with a fixed repair message",
 		func(cause error, wantMessage string) {
 			api := &selectorQueryTestAPI{
 				deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
 				patchSnapshot:  testNetBoxAssignmentSnapshot("failed", ""),
 			}
-			resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(cause)}
+			resolver := &fakeCredentialsReaderRepository{err: credentialResolutionFailure(cause)}
 			client := newTestNetBoxClient(api, resolver)
 
 			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
@@ -625,7 +819,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 
 	It("returns retryable resolver errors without changing device status", func() {
 		api := &selectorQueryTestAPI{deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`)}
-		resolver := &fakeDeviceCredentialResolver{err: errors.New("Secret API unavailable")}
+		resolver := &fakeCredentialsReaderRepository{err: errors.New("Secret API unavailable")}
 		client := newTestNetBoxClient(api, resolver)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
@@ -645,7 +839,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 				},
 				patchErr: patchErr,
 			}
-			resolver := &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("invalid credentials"))}
+			resolver := &fakeCredentialsReaderRepository{err: credentialResolutionFailure(errors.New("invalid credentials"))}
 			client := newTestNetBoxClient(api, resolver)
 
 			host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
@@ -673,7 +867,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
 			patchSnapshot:  testNetBoxAssignmentSnapshot(netBoxStatusStaged, ""),
 		}
-		client := newTestNetBoxClient(api, &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errors.New("invalid credentials"))})
+		client := newTestNetBoxClient(api, &fakeCredentialsReaderRepository{err: credentialResolutionFailure(errors.New("invalid credentials"))})
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -687,7 +881,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 			deviceSnapshot: stagedManagedDeviceSnapshot(`W/"device-revision-1"`),
 			patchSnapshot:  netboxclient.DeviceSnapshot{Device: netboxclient.Device{ID: "47", Status: "failed"}},
 		}
-		client := newTestNetBoxClient(api, &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errMissingNetBoxSecret)})
+		client := newTestNetBoxClient(api, &fakeCredentialsReaderRepository{err: credentialResolutionFailure(errMissingNetBoxSecret)})
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -703,7 +897,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 				ID: "46", Status: "failed", CustomFields: map[string]interface{}{"osac_instance_id": 123},
 			}},
 		}
-		client := newTestNetBoxClient(api, &fakeDeviceCredentialResolver{err: credentialResolutionFailure(errMissingNetBoxSecret)})
+		client := newTestNetBoxClient(api, &fakeCredentialsReaderRepository{err: credentialResolutionFailure(errMissingNetBoxSecret)})
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
 
@@ -712,16 +906,9 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(api.patchCalls).To(Equal(1))
 	})
 
-	It("returns an existing same-owner assignment without resolving credentials again", func() {
-		api := &selectorQueryTestAPI{deviceSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{
-			ID:     "46",
-			Status: netBoxStatusActive,
-			CustomFields: map[string]interface{}{
-				"osac_managed":     true,
-				"osac_instance_id": "bmi-123",
-			},
-		}}}
-		resolver := &fakeDeviceCredentialResolver{credentials: &NetBoxCredentials{Username: []byte("user"), Password: []byte("pass")}}
+	It("resolves credentials and prepares an existing same-owner assignment without patching", func() {
+		api := &selectorQueryTestAPI{deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-123")}
+		resolver := &fakeCredentialsReaderRepository{credentials: testNetBoxCredentials()}
 		client := newTestNetBoxClient(api, resolver)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
@@ -729,8 +916,9 @@ var _ = Describe("NetBox assignment credential checks", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(host).NotTo(BeNil())
 		Expect(host.BareMetalInstanceID).To(Equal("bmi-123"))
-		Expect(resolver.calls).To(BeZero())
+		Expect(resolver.calls).To(Equal(1))
 		Expect(api.patchCalls).To(BeZero())
+		Expect(host.Ready).To(BeTrue())
 	})
 
 	It("does not resolve credentials for a device assigned to another instance", func() {
@@ -742,7 +930,7 @@ var _ = Describe("NetBox assignment credential checks", func() {
 				"osac_instance_id": "bmi-other",
 			},
 		}}}
-		resolver := &fakeDeviceCredentialResolver{}
+		resolver := &fakeCredentialsReaderRepository{}
 		client := newTestNetBoxClient(api, resolver)
 
 		host, err := client.AssignHost(context.Background(), "metal3-system/netbox-46", "bmi-123", nil)
@@ -761,7 +949,9 @@ func stagedManagedDeviceSnapshot(etag string) netboxclient.DeviceSnapshot {
 			ID:     "46",
 			Status: netBoxStatusStaged,
 			CustomFields: map[string]interface{}{
-				"osac_managed": true,
+				"osac_managed":        true,
+				netBoxBMCAddressField: "redfish-virtualmedia+https://192.0.2.46/redfish/v1/Systems/1",
+				netBoxBootMACField:    "aa:bb:cc:dd:ee:46",
 			},
 		},
 		ETag: etag,
@@ -793,8 +983,37 @@ func (f *fakeSecretReader) Get(_ context.Context, id string) (secretapi.Secret, 
 	return f.getSecret, f.getError
 }
 
+func (*fakeSecretReader) Close() error {
+	return nil
+}
+
+var _ = Describe("NetBox connection data", func() {
+	It("validates and normalizes the BMC address and boot MAC", func() {
+		got, err := netBoxConnection(map[string]interface{}{
+			"osac_bmc_address": "redfish-virtualmedia+https://192.0.2.42/redfish/v1/Systems/1",
+			"osac_boot_mac":    "AA:BB:CC:DD:EE:42",
+		})
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(got).To(Equal(&netBoxConnectionData{
+			BMCAddress:     "redfish-virtualmedia+https://192.0.2.42/redfish/v1/Systems/1",
+			BootMACAddress: "aa:bb:cc:dd:ee:42",
+		}))
+	})
+
+	DescribeTable("rejects invalid fields independently from credentials",
+		func(customFields map[string]interface{}, wantErr string) {
+			_, err := netBoxConnection(customFields)
+			Expect(err).To(MatchError(ContainSubstring(wantErr)))
+		},
+		Entry("missing BMC address", map[string]interface{}{"osac_boot_mac": "aa:bb:cc:dd:ee:42"}, "invalid BMC address"),
+		Entry("unsupported BMC address scheme", map[string]interface{}{"osac_bmc_address": "http://192.0.2.42", "osac_boot_mac": "aa:bb:cc:dd:ee:42"}, "invalid BMC address"),
+		Entry("invalid boot MAC", map[string]interface{}{"osac_bmc_address": "ipmi://192.0.2.42", "osac_boot_mac": "not-a-mac"}, "invalid boot MAC"),
+	)
+})
+
 var _ = Describe("NetBox credential resolver", func() {
-	It("resolves one system Secret by label-key existence and validates device data", func() {
+	It("resolves typed BMC credentials from one system Secret", func() {
 		secret := secretapi.Secret{
 			ID:     "secret-1",
 			Tenant: "system",
@@ -812,22 +1031,13 @@ var _ = Describe("NetBox credential resolver", func() {
 			getSecret: secret,
 		}
 		resolver := NewNetBoxCredentialResolver(reader)
-		device := netboxclient.Device{
-			ID: "42",
-			CustomFields: map[string]interface{}{
-				"osac_bmc_address": "redfish-virtualmedia+https://192.0.2.42/redfish/v1/Systems/1",
-				"osac_boot_mac":    "AA:BB:CC:DD:EE:42",
-			},
-		}
 
-		got, err := resolver.Resolve(context.Background(), device)
+		got, err := resolver.GetCredentials(context.Background(), "42")
 
 		Expect(err).NotTo(HaveOccurred())
-		Expect(got).To(Equal(&NetBoxCredentials{
-			BMCAddress:     "redfish-virtualmedia+https://192.0.2.42/redfish/v1/Systems/1",
-			BootMACAddress: "aa:bb:cc:dd:ee:42",
-			Username:       []byte("bmc-user"),
-			Password:       []byte("bmc-password"),
+		Expect(got).To(Equal(&BMCCredentials{
+			Username: []byte("bmc-user"),
+			Password: []byte("bmc-password"),
 		}))
 		Expect(reader.listFilter).To(Equal(secretapi.Filter(`this.metadata.tenant == "system" && "osac.openshift.io/netbox-device-42" in this.metadata.labels`)))
 		Expect(reader.listLimit).To(Equal(int32(1)))
@@ -836,29 +1046,12 @@ var _ = Describe("NetBox credential resolver", func() {
 		Expect(reader.getCalls).To(Equal(1))
 	})
 
-	DescribeTable("rejects invalid BMC fields before contacting the Secret API",
-		func(device netboxclient.Device, wantErr string) {
-			reader := &fakeSecretReader{}
-			resolver := NewNetBoxCredentialResolver(reader)
-
-			_, err := resolver.Resolve(context.Background(), device)
-
-			Expect(err).To(MatchError(ContainSubstring(wantErr)))
-			Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeTrue())
-			Expect(reader.listCalls).To(BeZero())
-			Expect(reader.getCalls).To(BeZero())
-		},
-		Entry("missing BMC address", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_boot_mac": "aa:bb:cc:dd:ee:42"}}, "invalid BMC address"),
-		Entry("unsupported BMC address scheme", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_bmc_address": "http://192.0.2.42", "osac_boot_mac": "aa:bb:cc:dd:ee:42"}}, "invalid BMC address"),
-		Entry("invalid boot MAC", netboxclient.Device{ID: "42", CustomFields: map[string]interface{}{"osac_bmc_address": "ipmi://192.0.2.42", "osac_boot_mac": "not-a-mac"}}, "invalid boot MAC"),
-	)
-
 	DescribeTable("rejects missing or ambiguous Secret matches",
 		func(result secretapi.ListResult, wantErr string, deterministic bool) {
 			reader := &fakeSecretReader{listResult: result}
 			resolver := NewNetBoxCredentialResolver(reader)
 
-			_, err := resolver.Resolve(context.Background(), validCredentialTestDevice())
+			_, err := resolver.GetCredentials(context.Background(), "42")
 
 			Expect(err).To(MatchError(ContainSubstring(wantErr)))
 			Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(Equal(deterministic))
@@ -877,7 +1070,7 @@ var _ = Describe("NetBox credential resolver", func() {
 			}
 			resolver := NewNetBoxCredentialResolver(reader)
 
-			_, err := resolver.Resolve(context.Background(), validCredentialTestDevice())
+			_, err := resolver.GetCredentials(context.Background(), "42")
 
 			Expect(err).To(MatchError(ContainSubstring(wantErr)))
 			Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(Equal(deterministic))
@@ -894,7 +1087,7 @@ var _ = Describe("NetBox credential resolver", func() {
 		reader := &fakeSecretReader{listError: errors.New("permission denied")}
 		resolver := NewNetBoxCredentialResolver(reader)
 
-		_, err := resolver.Resolve(context.Background(), validCredentialTestDevice())
+		_, err := resolver.GetCredentials(context.Background(), "42")
 
 		Expect(err).To(MatchError(ContainSubstring("failed to list OSAC Secrets")))
 		Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeFalse())
@@ -910,20 +1103,10 @@ var _ = Describe("NetBox credential resolver", func() {
 			getError: errors.New("permission denied"),
 		}
 
-		_, err := NewNetBoxCredentialResolver(reader).Resolve(context.Background(), validCredentialTestDevice())
+		_, err := NewNetBoxCredentialResolver(reader).GetCredentials(context.Background(), "42")
 
 		Expect(err).To(MatchError(ContainSubstring("failed to get OSAC Secret")))
 		Expect(errors.Is(err, ErrCredentialResolutionFailed)).To(BeFalse())
 		Expect(reader.getCalls).To(Equal(1))
 	})
 })
-
-func validCredentialTestDevice() netboxclient.Device {
-	return netboxclient.Device{
-		ID: "42",
-		CustomFields: map[string]interface{}{
-			"osac_bmc_address": "ipmi://192.0.2.42",
-			"osac_boot_mac":    "aa:bb:cc:dd:ee:42",
-		},
-	}
-}

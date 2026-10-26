@@ -39,7 +39,10 @@ import (
 	experimentalcredentials "google.golang.org/grpc/experimental/credentials"
 )
 
-const tokenHTTPTimeout = 30 * time.Second
+const (
+	tokenHTTPTimeout = 30 * time.Second
+	rpcTimeout       = 30 * time.Second
+)
 
 // Config contains the Secret API endpoint, OAuth client credential files, and
 // optional CA bundle path.
@@ -219,6 +222,8 @@ func (c *client) List(ctx context.Context, filter Filter, limit int32) (ListResu
 	if strings.TrimSpace(filterValue) == "" {
 		return ListResult{}, errors.New("Secret API filter is required")
 	}
+	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
 	response, err := c.api.List(ctx, &privatev1.SecretsListRequest{Filter: &filterValue, Limit: &limit})
 	if err != nil {
 		return ListResult{}, fmt.Errorf("failed to list OSAC Secrets: %w", err)
@@ -232,6 +237,8 @@ func (c *client) List(ctx context.Context, filter Filter, limit int32) (ListResu
 
 // Get returns one Secret, including its opaque data fields.
 func (c *client) Get(ctx context.Context, id string) (Secret, error) {
+	ctx, cancel := context.WithTimeout(ctx, rpcTimeout)
+	defer cancel()
 	response, err := c.api.Get(ctx, &privatev1.SecretsGetRequest{Id: id})
 	if err != nil {
 		return Secret{}, fmt.Errorf("failed to get OSAC Secret: %w", err)

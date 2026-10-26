@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/google/cel-go/cel"
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
@@ -35,28 +36,32 @@ import (
 )
 
 type fakeSecretsRPC struct {
+	listContext  context.Context
 	listRequest  *privatev1.SecretsListRequest
 	listResponse *privatev1.SecretsListResponse
 	listError    error
+	getContext   context.Context
 	getRequest   *privatev1.SecretsGetRequest
 	getResponse  *privatev1.SecretsGetResponse
 	getError     error
 }
 
 func (f *fakeSecretsRPC) List(
-	_ context.Context,
+	ctx context.Context,
 	request *privatev1.SecretsListRequest,
 	_ ...grpc.CallOption,
 ) (*privatev1.SecretsListResponse, error) {
+	f.listContext = ctx
 	f.listRequest = request
 	return f.listResponse, f.listError
 }
 
 func (f *fakeSecretsRPC) Get(
-	_ context.Context,
+	ctx context.Context,
 	request *privatev1.SecretsGetRequest,
 	_ ...grpc.CallOption,
 ) (*privatev1.SecretsGetResponse, error) {
+	f.getContext = ctx
 	f.getRequest = request
 	return f.getResponse, f.getError
 }
@@ -164,6 +169,10 @@ var _ = Describe("Secret API client", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(api.listRequest.GetFilter()).To(Equal(`this.metadata.tenant == "system"`))
 			Expect(api.listRequest.GetLimit()).To(Equal(int32(2)))
+			deadline, ok := api.listContext.Deadline()
+			Expect(ok).To(BeTrue())
+			Expect(time.Until(deadline)).To(BeNumerically(">", 0))
+			Expect(time.Until(deadline)).To(BeNumerically("<=", rpcTimeout))
 			Expect(got.Total).To(Equal(int32(1)))
 			Expect(got.Items).To(HaveLen(1))
 			Expect(got.Items[0].ID).To(Equal("secret-1"))
@@ -225,6 +234,10 @@ var _ = Describe("Secret API client", func() {
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(api.getRequest.GetId()).To(Equal("secret-1"))
+			deadline, ok := api.getContext.Deadline()
+			Expect(ok).To(BeTrue())
+			Expect(time.Until(deadline)).To(BeNumerically(">", 0))
+			Expect(time.Until(deadline)).To(BeNumerically("<=", rpcTimeout))
 			Expect(got.ID).To(Equal("secret-1"))
 			Expect(got.Tenant).To(Equal("system"))
 			Expect(got.Data["username"]).To(Equal([]byte("admin")))
