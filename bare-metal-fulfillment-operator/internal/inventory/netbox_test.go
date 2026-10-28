@@ -171,6 +171,18 @@ var _ = Describe("NetBox inventory client", func() {
 			Expect(api.patch.CustomFields).To(Equal(map[string]interface{}{"osac_instance_id": nil}))
 		})
 
+		It("leaves another BMI's claim and resources untouched on a stale retry", func() {
+			api := &selectorQueryTestAPI{deviceSnapshot: testNetBoxAssignmentSnapshot(netBoxStatusActive, "bmi-new")}
+			manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
+			manager.EXPECT().Namespace().Return("metal3-system").AnyTimes()
+			client := NewNetBoxClient(api, manager, testNetBoxHostClass, nil)
+
+			err := client.UnassignHost(context.Background(), "metal3-system/netbox-46", "bmi-old", nil)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(api.patchCalls).To(BeZero())
+		})
+
 		DescribeTable("cleans resources without changing an unclaimed device", func(status string) {
 			api := &selectorQueryTestAPI{deviceSnapshot: testNetBoxAssignmentSnapshot(status, "")}
 			manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))

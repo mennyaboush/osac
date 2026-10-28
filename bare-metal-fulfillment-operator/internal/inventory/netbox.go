@@ -52,6 +52,7 @@ const (
 	netBoxReleaseUnspecified netBoxReleaseState = iota
 	netBoxReleaseComplete
 	netBoxReleaseClaimed
+	netBoxReleaseOwnedByAnotherInstance
 )
 
 var (
@@ -383,41 +384,44 @@ func netBoxInstanceOwner(device netboxclient.Device) (string, error) {
 }
 
 // UnassignHost removes the NetBox claim after BMH and generated Secret deletion completes.
-func (c *NetBoxClient) UnassignHost(ctx context.Context, inventoryHostID, _ string, _ []string) error {
+func (c *NetBoxClient) UnassignHost(ctx context.Context, inventoryHostID, bareMetalInstanceID string, _ []string) error {
 	_, deviceID, err := c.parseNetBoxHostID(inventoryHostID)
 	if err != nil {
 		return err
 	}
-	return c.unassignNetBoxDevice(ctx, deviceID)
+	return c.unassignNetBoxDevice(ctx, deviceID, bareMetalInstanceID)
 }
 
-func (c *NetBoxClient) unassignNetBoxDevice(ctx context.Context, deviceID string) error {
+func (c *NetBoxClient) unassignNetBoxDevice(ctx context.Context, deviceID, bareMetalInstanceID string) error {
 	snapshot, err := c.readNetBoxDevice(ctx, deviceID)
 	if err != nil {
 		return err
 	}
-	return c.unassignNetBoxSnapshot(ctx, deviceID, snapshot)
+	return c.unassignNetBoxSnapshot(ctx, deviceID, bareMetalInstanceID, snapshot)
 }
 
-func (c *NetBoxClient) unassignNetBoxSnapshot(ctx context.Context, deviceID string, snapshot netboxclient.DeviceSnapshot) error {
-	state, err := classifyNetBoxRelease(snapshot.Device)
+func (c *NetBoxClient) unassignNetBoxSnapshot(ctx context.Context, deviceID, bareMetalInstanceID string, snapshot netboxclient.DeviceSnapshot) error {
+	state, err := classifyNetBoxRelease(snapshot.Device, bareMetalInstanceID)
 	if err != nil {
 		return err
 	}
 	return c.cleanupAndReleaseNetBoxDevice(ctx, deviceID, snapshot.ETag, state)
 }
 
-func classifyNetBoxRelease(device netboxclient.Device) (netBoxReleaseState, error) {
+func classifyNetBoxRelease(device netboxclient.Device, bareMetalInstanceID string) (netBoxReleaseState, error) {
 	owner, err := netBoxInstanceOwner(device)
 	if err != nil {
 		return netBoxReleaseUnspecified, err
 	}
-	return netBoxReleaseStateFor(device.Status, owner)
+	return netBoxReleaseStateFor(device.Status, owner, bareMetalInstanceID)
 }
 
-func netBoxReleaseStateFor(status, owner string) (netBoxReleaseState, error) {
-	if status == netBoxStatusActive && owner != "" {
+func netBoxReleaseStateFor(status, owner, bareMetalInstanceID string) (netBoxReleaseState, error) {
+	if status == netBoxStatusActive && owner != "" && owner == bareMetalInstanceID {
 		return netBoxReleaseClaimed, nil
+	}
+	if status == netBoxStatusActive && owner != "" {
+		return netBoxReleaseOwnedByAnotherInstance, nil
 	}
 	if status != netBoxStatusActive && owner == "" {
 		return netBoxReleaseComplete, nil
@@ -449,6 +453,9 @@ func (c *NetBoxClient) confirmNetBoxBMHDeletion(ctx context.Context, name string
 }
 
 func (c *NetBoxClient) cleanupAndReleaseNetBoxDevice(ctx context.Context, deviceID, etag string, state netBoxReleaseState) error {
+	if state == netBoxReleaseOwnedByAnotherInstance {
+		return nil
+	}
 	if err := c.deleteNetBoxResources(ctx, deviceID); err != nil {
 		return err
 	}
