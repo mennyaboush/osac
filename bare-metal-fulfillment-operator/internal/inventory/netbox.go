@@ -364,8 +364,16 @@ func (c *NetBoxClient) GetHostNICs(ctx context.Context, inventoryHostID string) 
 	if err != nil {
 		return nil, err
 	}
-	macs, err := c.bmhManager.GetHardwareNICs(ctx, netBoxHostPrefix+deviceID)
-	if err != nil || len(macs) == 0 {
+	bmhName := netBoxHostPrefix + deviceID
+	ready, err := c.bmhManager.IsBMHReady(ctx, bmhName)
+	if err != nil {
+		return nil, err
+	}
+	if !ready {
+		return nil, fmt.Errorf("BareMetalHost %s is not ready for NIC metadata", bmhName)
+	}
+	macs, err := c.bmhManager.GetHardwareNICs(ctx, bmhName)
+	if err != nil {
 		return nil, err
 	}
 	nics := make([]HostNIC, len(macs))
@@ -375,7 +383,7 @@ func (c *NetBoxClient) GetHostNICs(ctx context.Context, inventoryHostID string) 
 	return nics, nil
 }
 
-// GetHostLogicalPortMACs reads native interfaces before using the device fallback.
+// GetHostLogicalPortMACs returns the logical-port MAC mapping for a NetBox device.
 func (c *NetBoxClient) GetHostLogicalPortMACs(ctx context.Context, inventoryHostID string) (map[string]string, error) {
 	_, deviceID, err := c.parseNetBoxHostID(inventoryHostID)
 	if err != nil {
@@ -385,18 +393,30 @@ func (c *NetBoxClient) GetHostLogicalPortMACs(ctx context.Context, inventoryHost
 		return nil, errNetBoxClientNotImplemented
 	}
 
-	macs, interfaceErr := c.nativeLogicalPortMACs(ctx, deviceID)
-	if interfaceErr == nil && len(macs) > 0 {
-		return macs, nil
+	nativeMACs, interfaceErr := c.nativeLogicalPortMACs(ctx, deviceID)
+	customMACs, fallbackErr := c.customFieldLogicalPortMACs(ctx, deviceID)
+	if len(nativeMACs) == 0 && len(customMACs) == 0 {
+		return nil, errors.Join(interfaceErr, fallbackErr, errors.New("NetBox device has no interface MAC mapping"))
 	}
-	macs, fallbackErr := c.customFieldLogicalPortMACs(ctx, deviceID)
-	if fallbackErr != nil {
-		return nil, errors.Join(interfaceErr, fallbackErr)
+	return mergeLogicalPortMACs(nativeMACs, customMACs), nil
+}
+
+func mergeLogicalPortMACs(nativeMACs, customMACs map[string]string) map[string]string {
+	macs := make(map[string]string, len(nativeMACs)+len(customMACs))
+	for name, mac := range nativeMACs {
+		macs[name] = mac
 	}
-	if len(macs) == 0 {
-		return nil, errors.Join(interfaceErr, errors.New("NetBox device has no interface MAC mapping"))
+	for _, customMAC := range customMACs {
+		for name, nativeMAC := range nativeMACs {
+			if strings.EqualFold(nativeMAC, customMAC) {
+				delete(macs, name)
+			}
+		}
 	}
-	return macs, nil
+	for name, mac := range customMACs {
+		macs[name] = mac
+	}
+	return macs
 }
 
 func (c *NetBoxClient) nativeLogicalPortMACs(ctx context.Context, deviceID string) (map[string]string, error) {
