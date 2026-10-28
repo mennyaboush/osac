@@ -411,10 +411,13 @@ func (c *NetBoxClient) GetHostLogicalPortMACs(ctx context.Context, inventoryHost
 		return nil, errNetBoxClientNotImplemented
 	}
 
-	nativeMACs, interfaceErr := c.nativeLogicalPortMACs(ctx, deviceID)
-	customMACs, fallbackErr := c.customFieldLogicalPortMACs(ctx, deviceID)
-	if len(nativeMACs) == 0 && len(customMACs) == 0 {
-		return nil, errors.Join(interfaceErr, fallbackErr, errors.New("NetBox device has no interface MAC mapping"))
+	nativeMACs, err := c.nativeLogicalPortMACs(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	customMACs, err := c.customFieldLogicalPortMACs(ctx, deviceID)
+	if err != nil {
+		return nil, err
 	}
 	return mergeLogicalPortMACs(nativeMACs, customMACs), nil
 }
