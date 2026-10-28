@@ -420,16 +420,9 @@ func (c *NetBoxClient) GetHostLogicalPortMACs(ctx context.Context, inventoryHost
 }
 
 func mergeLogicalPortMACs(nativeMACs, customMACs map[string]string) map[string]string {
-	macs := make(map[string]string, len(nativeMACs)+len(customMACs))
+	macs := make(map[string]string)
 	for name, mac := range nativeMACs {
 		macs[name] = mac
-	}
-	for _, customMAC := range customMACs {
-		for name, nativeMAC := range nativeMACs {
-			if strings.EqualFold(nativeMAC, customMAC) {
-				delete(macs, name)
-			}
-		}
 	}
 	for name, mac := range customMACs {
 		macs[name] = mac

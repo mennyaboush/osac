@@ -528,7 +528,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 		manager.EXPECT().IsBMHReady(ctx, "netbox-42").Return(true, nil)
 		manager.EXPECT().GetHardwareNICs(ctx, "netbox-42").Return([]string{"AA:BB:CC:DD:EE:01"}, nil)
 		api := &selectorQueryTestAPI{}
-		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass).GetHostNICs(ctx, "baremetal/netbox-42")
+		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass, nil).GetHostNICs(ctx, "baremetal/netbox-42")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal([]HostNIC{{MAC: "aa:bb:cc:dd:ee:01"}}))
 		Expect(api.deviceReadCalls).To(BeZero())
@@ -538,7 +538,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 		manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
 		manager.EXPECT().Namespace().Return("baremetal").Times(2)
 		manager.EXPECT().IsBMHReady(gomock.Any(), "netbox-42").Return(false, nil)
-		got, err := NewNetBoxClient(&selectorQueryTestAPI{}, manager, testNetBoxHostClass).
+		got, err := NewNetBoxClient(&selectorQueryTestAPI{}, manager, testNetBoxHostClass, nil).
 			GetHostNICs(context.Background(), "baremetal/netbox-42")
 		Expect(err).To(MatchError(ContainSubstring("not ready for NIC metadata")))
 		Expect(got).To(BeNil())
@@ -551,7 +551,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 		manager.EXPECT().IsBMHReady(ctx, "netbox-42").Return(true, nil)
 		manager.EXPECT().GetHardwareNICs(ctx, "netbox-42").Return(nil, nil)
 
-		got, err := NewNetBoxClient(&selectorQueryTestAPI{}, manager, testNetBoxHostClass).
+		got, err := NewNetBoxClient(&selectorQueryTestAPI{}, manager, testNetBoxHostClass, nil).
 			GetHostNICs(ctx, "baremetal/netbox-42")
 
 		Expect(err).NotTo(HaveOccurred())
@@ -566,14 +566,14 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 		manager.EXPECT().IsBMHReady(gomock.Any(), "netbox-42").Return(true, nil)
 		manager.EXPECT().GetHardwareNICs(gomock.Any(), "netbox-42").Return(nil, lookupErr)
 		api := &selectorQueryTestAPI{}
-		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass).
+		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass, nil).
 			GetHostNICs(context.Background(), "baremetal/netbox-42")
 		Expect(errors.Is(err, lookupErr)).To(BeTrue())
 		Expect(got).To(BeNil())
 		Expect(api.deviceReadCalls).To(BeZero())
 	})
 
-	It("prefers custom labels and fills gaps by MAC", func() {
+	It("prefers custom values for matching labels and retains aliases", func() {
 		manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
 		manager.EXPECT().Namespace().Return("baremetal").Times(2)
 		api := &selectorQueryTestAPI{
@@ -593,13 +593,14 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 				},
 			}},
 		}
-		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass).
+		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass, nil).
 			GetHostLogicalPortMACs(context.Background(), "baremetal/netbox-42")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal(map[string]string{
 			"data-0": "aa:bb:cc:dd:ee:01",
 			"data-1": "52:54:00:16:04:86",
 			"data-2": "52:54:00:16:04:87",
+			"eno1":   "AA:BB:CC:DD:EE:01",
 			"eno2":   "52:54:00:16:04:85",
 		}))
 		Expect(api.interfaceDevice).To(Equal("42"))
@@ -613,7 +614,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 			interfaces:    []netboxclient.DeviceInterface{{Name: "data-0", PrimaryMAC: "52:54:00:16:04:83"}},
 			deviceReadErr: errors.New("custom-field lookup failed"),
 		}
-		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass).
+		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass, nil).
 			GetHostLogicalPortMACs(context.Background(), "baremetal/netbox-42")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal(map[string]string{"data-0": "52:54:00:16:04:83"}))
@@ -633,7 +634,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 				},
 			},
 		}
-		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass).
+		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass, nil).
 			GetHostLogicalPortMACs(context.Background(), "baremetal/netbox-42")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal(map[string]string{"data-0": "52:54:00:16:04:83"}))
@@ -653,7 +654,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 				},
 			}},
 		}
-		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass).
+		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass, nil).
 			GetHostLogicalPortMACs(context.Background(), "baremetal/netbox-42")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(got).To(Equal(map[string]string{"data-0": "52:54:00:16:04:83"}))
@@ -663,7 +664,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 		func(api *selectorQueryTestAPI) {
 			manager := baremetalhost.NewMockBMHLifecycleManager(gomock.NewController(GinkgoT()))
 			manager.EXPECT().Namespace().Return("baremetal").Times(2)
-			got, err := NewNetBoxClient(api, manager, testNetBoxHostClass).
+			got, err := NewNetBoxClient(api, manager, testNetBoxHostClass, nil).
 				GetHostLogicalPortMACs(context.Background(), "baremetal/netbox-42")
 			Expect(err).To(HaveOccurred())
 			Expect(got).To(BeNil())
@@ -690,7 +691,7 @@ var _ = Describe("NetBox host NIC reads", Label("OSAC-5953"), func() {
 			interfaceErr:   lookupErr,
 			deviceSnapshot: netboxclient.DeviceSnapshot{Device: netboxclient.Device{ID: "42"}},
 		}
-		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass).
+		got, err := NewNetBoxClient(api, manager, testNetBoxHostClass, nil).
 			GetHostLogicalPortMACs(context.Background(), "baremetal/netbox-42")
 		Expect(errors.Is(err, lookupErr)).To(BeTrue())
 		Expect(got).To(BeNil())
