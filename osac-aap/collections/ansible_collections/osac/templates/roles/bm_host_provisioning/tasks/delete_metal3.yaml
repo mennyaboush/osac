@@ -75,7 +75,7 @@
               {{ bmh_deprovision_status.resources[0].metadata.annotations['osac.openshift.io/fallback-root-device'] | default('') }}
           when:
             - generated_root_disk | length > 0
-            - generated_root_disk == bmh_deprovision_status.resources[0].spec.rootDeviceHints.deviceName | default('')
+            - "bmh_deprovision_status.resources[0].spec.rootDeviceHints | default({}) == {'deviceName': generated_root_disk}"
           kubernetes.core.k8s_json_patch:
             api_version: metal3.io/v1alpha1
             kind: BareMetalHost
@@ -86,8 +86,9 @@
                 path: /metadata/annotations/osac.openshift.io~1fallback-root-device
                 value: "{{ generated_root_disk }}"
               - op: test
-                path: /spec/rootDeviceHints/deviceName
-                value: "{{ generated_root_disk }}"
+                path: /spec/rootDeviceHints
+                value:
+                  deviceName: "{{ generated_root_disk }}"
               - op: remove
                 path: /spec/rootDeviceHints
               - op: remove
