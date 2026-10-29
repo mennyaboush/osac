@@ -58,6 +58,7 @@ export REMOTE_KUBECONFIG_SECRET_NAME REMOTE_KUBECONFIG_SECRET_KEY
 # builds (see osac-test-infra#543).  Override with `make test GODEBUG=` to
 # disable, or set a different value to experiment.
 GODEBUG ?= http2client=0
+TOPOLVM_BACKING_SIZE ?= 20G
 
 # -- Fail-fast parameter validation ------------------------------------
 # Guards fire at parse time, gated by MAKECMDGOALS so `make help` works.
@@ -222,6 +223,14 @@ KIND_ARM64_CLI_IMAGE := quay.io/openshift/origin-cli:4.20.0
 # using the shared cliImage value without platform-specific values files.
 HOST_IS_MAC_ARM := $(shell if [ "$$(uname -s)" = "Darwin" ] && { [ "$$(uname -m)" = "arm64" ] || [ "$$(sysctl -in hw.optional.arm64 2>/dev/null)" = "1" ]; }; then echo true; fi)
 KIND_ARM64_CLI_IMAGE_SCRIPT := scripts/dev-full/build-arm64-cli-image.sh
+DEVSTACK_HELM_ARGS :=
+DEVSTACK_CLUSTER_CHECK :=
+ifeq ($(PLATFORM)/$(PROFILE),kind/dev-full)
+ifeq ($(HOST_IS_MAC_ARM),true)
+DEVSTACK_HELM_ARGS := --set arm64VmCompatibility.enabled=true
+DEVSTACK_CLUSTER_CHECK := scripts/dev-full/check-cluster-compatibility.sh
+endif
+endif
 # Apple Silicon and dev-full use the runtime wrapper. Plain non-macOS dev
 # keeps its existing direct Kind/container-tool behavior.
 KIND_RUNTIME_REQUIRED := $(if $(filter true,$(HOST_IS_MAC_ARM)),true,$(if $(filter dev-full,$(PROFILE)),true,false))
@@ -259,6 +268,7 @@ endif
 endif
 KIND_RUNTIME_ENV := KIND_PROFILE=$(PROFILE) \
 	KIND_OSAC_NAMESPACE=$(NS) \
+	TOPOLVM_BACKING_SIZE=$(TOPOLVM_BACKING_SIZE) \
 	$(if $(KIND_RUNTIME_PROVIDER),KIND_EXPERIMENTAL_PROVIDER=$(KIND_RUNTIME_PROVIDER))
 KIND_RUNTIME_CMD := $(KIND_RUNTIME_ENV) $(KIND_RUNTIME)
 KIND_CLUSTER_NAME ?= osac-dev
@@ -392,6 +402,26 @@ else
 	@bash -c 'source scripts/lib.sh && wait_for_namespace_cleanup keycloak'
 	$(eval DOMAIN := $(shell oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'))
 	@[ -n "$(DOMAIN)" ] || { echo "ERROR: could not determine cluster domain" >&2; exit 1; }
+	# Render the full chart because the EVPN Job is optional and --show-only fails
+	# when EVPN is disabled. Match Helm's wait to its deadline plus a margin.
+	@evpn_job_deadline="$$(helm template osac-infra $(INFRA_CHART) \
+		--namespace osac-infra \
+		--values $(INFRA_VALUES) $(INFRA_VALUES_EXTRA) \
+		--set osacNamespace=$(NS) \
+		--set lvms.channel=stable-$(OCP_VERSION) \
+		--set keycloak.hostname=https://keycloak-keycloak.$(DOMAIN) \
+		--set keycloak.route.hostname=https://keycloak-keycloak.$(DOMAIN) \
+		--set "bundledVault.keycloakIssuerUrl=https://keycloak-keycloak.$(DOMAIN)/realms/osac" \
+		2>/dev/null \
+		| awk \
+			-e '/^kind: Job$$/ { job=1 }' \
+			-e 'job && /^  name: osac-infra-configure-evpn$$/ { evpn=1 }' \
+			-e 'evpn && /^  activeDeadlineSeconds:/ { print $$2; exit }' \
+			-e '/^---$$/ { job=0; evpn=0 }')"; \
+	helm_timeout_seconds=3600; \
+	if [ -n "$$evpn_job_deadline" ]; then \
+		helm_timeout_seconds=$$((evpn_job_deadline + 300)); \
+	fi; \
 	helm upgrade --install osac-infra $(INFRA_CHART) \
 		--namespace osac-infra --create-namespace \
 		--values $(INFRA_VALUES) $(INFRA_VALUES_EXTRA) \
@@ -400,7 +430,7 @@ else
 		--set keycloak.hostname=https://keycloak-keycloak.$(DOMAIN) \
 		--set keycloak.route.hostname=keycloak-keycloak.$(DOMAIN) \
 		--set "bundledVault.keycloakIssuerUrl=https://keycloak-keycloak.$(DOMAIN)/realms/osac" \
-		--timeout 30m --wait-for-jobs \
+		--timeout "$${helm_timeout_seconds}s" --wait-for-jobs \
 	|| { \
 		echo "=== osac-infra release status ==="; \
 		helm status osac-infra -n osac-infra --show-desc || true; \
@@ -505,6 +535,7 @@ ifneq ($(PLATFORM)/$(PROFILE),kind/dev-full)
 	@echo "ERROR: install-devstack requires PLATFORM=kind PROFILE=dev-full" >&2; exit 1
 endif
 	@case "$(HELM_MAJOR)" in 3|4) ;; *) echo "ERROR: install-devstack requires Helm 3 or 4; could not detect a supported Helm version" >&2; exit 1;; esac
+	$(DEVSTACK_CLUSTER_CHECK)
   # Pre-install: node-level CNI setup (requires host container runtime access)
 	$(KIND_RUNTIME_ENV) scripts/dev-full/install-virt-node-setup.sh $(KIND_CLUSTER_NAME)
 ifeq ($(HELM_MAJOR),4)
@@ -520,6 +551,7 @@ endif
 		--set osacNamespace=$(NS) \
 		--set kindClusterName=$(KIND_CLUSTER_NAME) \
 		--set ui.enabled=true \
+		$(DEVSTACK_HELM_ARGS) \
 		--post-renderer $(DEV_FULL_HELM_POST_RENDERER) \
 		$(DEVSTACK_HELM_APPLY_ARGS) \
 		--wait --timeout 30m
@@ -601,7 +633,8 @@ install-multicluster: ## Prepare a VMaaS workload cluster, then install OSAC on 
 	fi
 	$(MAKE) prepare-remote-cluster NS=$(NS) \
 		REMOTE_KUBECONFIG="$(REMOTE_KUBECONFIG)" \
-		REMOTE_STORAGE_CLASS="$(REMOTE_STORAGE_CLASS)"
+		REMOTE_STORAGE_CLASS="$(REMOTE_STORAGE_CLASS)" \
+		EVPN_VALUES="$(INFRA_VALUES)"
 	$(MAKE) install-infra PLATFORM=openshift PROFILE=vmaas-ci NS=$(NS) \
 		KUBECONFIG="$(KUBECONFIG)" \
 		INFRA_VALUES_EXTRA="-f values/vmaas-ci/multicluster-infra.yaml"
@@ -612,11 +645,12 @@ install-multicluster: ## Prepare a VMaaS workload cluster, then install OSAC on 
 		EXTRA_HELM_ARGS="$(EXTRA_HELM_ARGS)"
 
 .PHONY: prepare-remote-cluster
-prepare-remote-cluster: ## Prepare the remote VMaaS workload cluster without changing management
+prepare-remote-cluster: helm-infra-deps ## Prepare the remote VMaaS workload cluster without changing management
 	@test -r "$(REMOTE_KUBECONFIG)" || { echo "ERROR: REMOTE_KUBECONFIG is not readable: $(REMOTE_KUBECONFIG)" >&2; exit 1; }
 	@oc --kubeconfig "$(REMOTE_KUBECONFIG)" get clusterversion version >/dev/null
 	REMOTE_KUBECONFIG="$(REMOTE_KUBECONFIG)" \
 	REMOTE_STORAGE_CLASS="$(REMOTE_STORAGE_CLASS)" \
+	EVPN_VALUES="$(EVPN_VALUES)" \
 	INSTALLER_NAMESPACE="$(NS)" \
 	bash scripts/setup-remote-cluster.sh prepare
 
@@ -814,7 +848,7 @@ csi-render-test: helm-deps helm-infra-deps ## Verify CSI and storage-provider ch
 		helm template osac-infra $(INFRA_CHART) \
 			--values values/caas-ci/infra.yaml > "$$infra_render"; \
 		! rg -q 'osac-infra-create-csi-creds|osac-csi-driver-credentials' "$$infra_render"; \
-		assert_helm_failure "at '/namespace': value must be one of" \
+		assert_helm_failure "(namespace: namespace|'/namespace': value) must be one of" \
 			helm template csi-driver ../osac-csi-driver/charts/csi-driver \
 			--set namespace=not-osac-csi; \
 		echo 'CSI render checks passed.'
@@ -834,6 +868,10 @@ event-publisher-render-test: helm-deps ## Check the event publisher and metering
 .PHONY: mce-render-test
 mce-render-test: helm-infra-deps ## Check disabled MCE defaults, explicit enablement, and CaaS inheritance
 	uv run --project .. python scripts/test-mce-render.py
+
+.PHONY: evpn-render-test
+evpn-render-test: helm-infra-deps ## Check EVPN host networking renders
+	uv run --project .. python scripts/test-evpn-render.py
 
 .PHONY: fulfillment-auth-test
 fulfillment-auth-test: ## Check Fulfillment service-account token exchange behavior
@@ -860,7 +898,7 @@ chart-name-independence-render-test: helm-osac-deps ## Check cross-chart secret/
 	uv run --project .. python scripts/test-chart-name-independence-render.py
 
 .PHONY: helm-validate
-helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test event-publisher-render-test mce-render-test dev-full-render-test openbao-security-context-test bmf-netbox-render-test chart-name-independence-render-test ## Validate all charts (lint + template)
+helm-validate: helm-lint csi-render-test helm-networking-test fulfillment-trust-render-test fulfillment-auth-test metering-auth-render-test event-publisher-render-test mce-render-test evpn-render-test dev-full-render-test openbao-security-context-test bmf-netbox-render-test chart-name-independence-render-test ## Validate all charts (lint + template)
 	@# bmaas-netbox-ci layers bmaas-ci as its base (see the profile-selection
 	@# block); validate the same combination the installer deploys.
 	@for d in values/*/; do \
