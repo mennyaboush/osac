@@ -39,6 +39,7 @@
           - "'checksum' not in bmh_patch.spec.image"
           - "'checksumType' not in bmh_patch.spec.image"
           - "'rootDeviceHints' not in bmh_patch.spec"
+          - "'metadata' not in bmh_patch"
         fail_msg: "OCI image BMH patch must not contain checksum or checksumType"
 
 - name: BMH Patch Construction - Non-OCI image includes checksum
@@ -86,6 +87,7 @@
           - bmh_patch.spec.image.checksum == "deadbeef1234"
           - bmh_patch.spec.image.checksumType == "md5"
           - bmh_patch.spec.rootDeviceHints.deviceName == "/dev/vda"
+          - bmh_patch.metadata.annotations['osac.openshift.io/fallback-root-device'] == "/dev/vda"
         fail_msg: "Non-OCI image BMH patch must contain checksum and checksumType"
 
     - name: Set an existing root device hint
@@ -102,4 +104,6 @@
 
     - name: Assert fallback does not replace existing hint
       ansible.builtin.assert:
-        that: "'rootDeviceHints' not in bmh_patch.spec"
+        that:
+          - "'rootDeviceHints' not in bmh_patch.spec"
+          - "'metadata' not in bmh_patch"

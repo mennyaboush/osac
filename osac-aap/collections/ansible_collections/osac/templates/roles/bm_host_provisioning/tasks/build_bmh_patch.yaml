@@ -69,5 +69,6 @@
   ansible.builtin.set_fact:
     bmh_patch: >-
       {{ bmh_patch | combine(
-           {'spec': {'rootDeviceHints': {'deviceName': fallback_root_disk}}},
+           {'metadata': {'annotations': {'osac.openshift.io/fallback-root-device': fallback_root_disk}},
+            'spec': {'rootDeviceHints': {'deviceName': fallback_root_disk}}},
            recursive=True) }}

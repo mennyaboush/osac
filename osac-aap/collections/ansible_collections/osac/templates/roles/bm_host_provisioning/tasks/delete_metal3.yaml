@@ -69,6 +69,26 @@
           retries: 120
           delay: 30
 
+        - name: Clear generated root device hint
+          vars:
+            generated_root_disk: >-
+              {{ bmh_deprovision_status.resources[0].metadata.annotations['osac.openshift.io/fallback-root-device'] | default('') }}
+          when:
+            - generated_root_disk | length > 0
+            - generated_root_disk == bmh_deprovision_status.resources[0].spec.rootDeviceHints.deviceName | default('')
+          kubernetes.core.k8s:
+            api_version: metal3.io/v1alpha1
+            kind: BareMetalHost
+            namespace: "{{ bmh_namespace }}"
+            name: "{{ bmh_name }}"
+            state: present
+            definition:
+              metadata:
+                annotations:
+                  osac.openshift.io/fallback-root-device: null
+              spec:
+                rootDeviceHints: null
+
         - name: Delete networkData Secret
           kubernetes.core.k8s:
             api_version: v1
