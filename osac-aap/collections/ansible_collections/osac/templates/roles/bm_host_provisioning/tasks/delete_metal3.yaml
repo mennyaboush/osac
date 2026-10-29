@@ -76,18 +76,22 @@
           when:
             - generated_root_disk | length > 0
             - generated_root_disk == bmh_deprovision_status.resources[0].spec.rootDeviceHints.deviceName | default('')
-          kubernetes.core.k8s:
+          kubernetes.core.k8s_json_patch:
             api_version: metal3.io/v1alpha1
             kind: BareMetalHost
             namespace: "{{ bmh_namespace }}"
             name: "{{ bmh_name }}"
-            state: present
-            definition:
-              metadata:
-                annotations:
-                  osac.openshift.io/fallback-root-device: null
-              spec:
-                rootDeviceHints: null
+            patch:
+              - op: test
+                path: /metadata/annotations/osac.openshift.io~1fallback-root-device
+                value: "{{ generated_root_disk }}"
+              - op: test
+                path: /spec/rootDeviceHints/deviceName
+                value: "{{ generated_root_disk }}"
+              - op: remove
+                path: /spec/rootDeviceHints
+              - op: remove
+                path: /metadata/annotations/osac.openshift.io~1fallback-root-device
 
         - name: Delete networkData Secret
           kubernetes.core.k8s:
