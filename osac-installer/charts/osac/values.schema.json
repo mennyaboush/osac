@@ -2178,6 +2178,11 @@
               "description": "Skip TLS verification of BCM server certificate (test environments only)",
               "default": false
             },
+            "disableBMCVerification": {
+              "type": "boolean",
+              "description": "Default for spec.bmc.disableCertificateVerification on BareMetalHosts the BCM inventory backend creates. Leave false so BMC certificates are verified.",
+              "default": false
+            },
             "hostClass": {
               "type": "string",
               "description": "Host class identifier for BCM inventory",

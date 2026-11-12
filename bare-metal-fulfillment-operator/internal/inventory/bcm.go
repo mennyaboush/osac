@@ -88,6 +88,9 @@ type BCMClientConfig struct {
 	URL                string `json:"url"`
 	CredentialsSecret  string `json:"credentialsSecret"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	// DisableBMCVerification makes BareMetalHosts created for BCM hosts skip
+	// TLS verification of the BMC certificate.
+	DisableBMCVerification bool `json:"disableBMCVerification"`
 }
 
 // ParseBCMOptions extracts and validates BCM options from the inventory config.
@@ -130,6 +133,9 @@ type BCMClient struct {
 	credentialsWriter credentials.Writer
 	bmcDiscoverer     BMCDiscoverer
 	hostClass         string
+	// disableBMCVerification makes created BareMetalHosts skip BMC certificate
+	// verification; the default keeps verification on.
+	disableBMCVerification bool
 }
 
 // NewBCMClient creates a BCM inventory client with injected dependencies.
@@ -152,6 +158,13 @@ func NewBCMClient(
 // error; only IPMI (static URL) works without a discoverer.
 func (c *BCMClient) SetBMCDiscoverer(d BMCDiscoverer) {
 	c.bmcDiscoverer = d
+}
+
+// SetDisableBMCVerification sets whether BareMetalHosts created for BCM hosts
+// skip TLS verification of the BMC certificate. It defaults to false, so a
+// caller that never sets it keeps verification on.
+func (c *BCMClient) SetDisableBMCVerification(disable bool) {
+	c.disableBMCVerification = disable
 }
 
 // CertWatcher returns the certificate watcher for registration with the
@@ -497,11 +510,8 @@ func (c *BCMClient) ensureBMHExists(ctx context.Context, device *bcmclient.Devic
 		return fmt.Errorf("failed to create BMC credentials Secret for host %q: %w", device.Hostname, err)
 	}
 
-	// BCM has no per-host BMC certificate-verification setting yet, so BCM-created
-	// hosts always verify the BMC certificate. Tracked as a follow-up to
-	// OSAC-7116.
 	params := baremetalhost.NewCreateParams(bmhName, bmcAddress, device.MAC, bareMetalInstanceID,
-		baremetalhost.CreateOptions{})
+		baremetalhost.CreateOptions{DisableCertificateVerification: c.disableBMCVerification})
 	if err := c.bmhManager.CreateBMH(ctx, params); err != nil {
 		return fmt.Errorf("failed to create BareMetalHost for %s: %w", device.Hostname, err)
 	}

@@ -129,6 +129,7 @@ bcm:
     -----END PRIVATE KEY-----
   caCert: ""                            # optional — CA to verify the BCM server cert; empty = system trust
   insecureSkipVerify: false             # true only in test environments
+  disableBMCVerification: false         # true only when BMC certificates are untrusted
   hostClass: "bcm"                      # host class stamped on assigned hosts
   bmhNamespace: "osac-baremetal"        # required — namespace where the operator creates BMH CRs
 
@@ -157,7 +158,7 @@ When `bcm.enabled: true`, the chart creates three Secrets in the release namespa
 | Secret (default name) | Rendered content |
 |-----------------------|------------------|
 | `osac-bcm-certs` (`secrets.bcmCerts`) | `stringData.tls.crt` = `bcm.cert`, `tls.key` = `bcm.key`, `ca.crt` = `bcm.caCert` (if set). Mounted at `/etc/osac/certs/<secrets.bcmCerts>/` (default `/etc/osac/certs/osac-bcm-certs/`). |
-| `osac-inventory-config` | `inventory.yaml`: `type: bcm`, `hostClass: <bcm.hostClass>`, `options.bcm.{url, credentialsSecret: <secrets.bcmCerts>, insecureSkipVerify}`. |
+| `osac-inventory-config` | `inventory.yaml`: `type: bcm`, `hostClass: <bcm.hostClass>`, `options.bcm.{url, credentialsSecret: <secrets.bcmCerts>, insecureSkipVerify, disableBMCVerification}`. |
 | `osac-management-config` | `management.yaml`: `type: metal3`, `options.metal3.namespace: <bcm.bmhNamespace>`. |
 
 BCM inventory **requires** Metal3 management — the operator errors out otherwise.
@@ -226,6 +227,7 @@ use a BCM certificate **profile scoped to these methods** rather than the full
 | `bcm.bmhNamespace` | yes | Namespace where the operator creates BMH CRs (also the Metal3 management namespace). |
 | `bcm.caCert` | no | Raw PEM CA to verify the BCM server cert (empty → system trust store). |
 | `bcm.insecureSkipVerify` | no | Disable BCM server-cert verification — **test only** (default `false`). |
+| `bcm.disableBMCVerification` | no | Skip BMC certificate verification on the BareMetalHosts this backend creates — **lab only** (default `false`). Does not affect the BCM server cert. |
 | `bcm.hostClass` | no | Host class stamped on assigned hosts (default `bcm`). |
 | `secrets.bcmCerts` | no | Name of the generated mTLS Secret (default `osac-bcm-certs`). |
 

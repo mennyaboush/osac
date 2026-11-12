@@ -480,6 +480,9 @@ bmf:
     key: ""
     caCert: ""
     insecureSkipVerify: false
+    # Default for spec.bmc.disableCertificateVerification on BareMetalHosts the
+    # BCM inventory backend creates.
+    disableBMCVerification: false
     hostClass: "bcm"
     bmhNamespace: ""
   secretAPI:

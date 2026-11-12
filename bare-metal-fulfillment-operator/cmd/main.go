@@ -661,12 +661,17 @@ func createBCMInventoryClient(
 	setupLog.Info("Metal3 dependencies configured", "namespace", bmhMgr.Namespace())
 
 	client := inventory.NewBCMClient(bcmClient, bmhMgr, secretWriter, inventoryCfg.HostClass)
+	client.SetDisableBMCVerification(bcmCfg.DisableBMCVerification)
 
+	// BMC Redfish discovery talks to the BMC, not to BCM. Keep the existing
+	// insecureSkipVerify behaviour, which already governed it, and let the BMC
+	// certificate-verification setting widen it.
 	discoverer := &bmcdiscovery.GofishDiscoverer{
-		InsecureSkipVerify: bcmCfg.InsecureSkipVerify,
+		InsecureSkipVerify: bcmCfg.InsecureSkipVerify || bcmCfg.DisableBMCVerification,
 	}
 	client.SetBMCDiscoverer(discoverer)
-	setupLog.Info("BMC Redfish discoverer configured", "insecureSkipVerify", bcmCfg.InsecureSkipVerify)
+	setupLog.Info("BMC Redfish discoverer configured",
+		"insecureSkipVerify", discoverer.InsecureSkipVerify)
 
 	if cw := client.CertWatcher(); cw != nil {
 		if err := mgr.Add(cw); err != nil {

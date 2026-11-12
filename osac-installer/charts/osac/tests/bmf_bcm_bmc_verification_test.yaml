@@ -1,0 +1,27 @@
+suite: "bmf BCM inventory: BMC certificate verification"
+templates:
+  - charts/bmf/templates/bcm-inventory-config.yaml
+values:
+  - ../ci/default-values.yaml
+set:
+  global.services.bmaas.enabled: true
+  bmf.bcm.enabled: true
+  bmf.bcm.url: https://bcm.example.org:8081
+  bmf.bcm.bmhNamespace: host-inventory
+release:
+  name: osac
+  namespace: osac
+tests:
+  - it: verifies BMC certificates by default
+    asserts:
+      - matchRegex:
+          path: stringData["inventory.yaml"]
+          pattern: "disableBMCVerification: false"
+
+  - it: propagates the fleet-wide override to the inventory config
+    set:
+      bmf.bcm.disableBMCVerification: true
+    asserts:
+      - matchRegex:
+          path: stringData["inventory.yaml"]
+          pattern: "disableBMCVerification: true"

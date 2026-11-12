@@ -74,6 +74,10 @@ bcm:
   key: ""
   caCert: ""
   insecureSkipVerify: false
+  # Default for spec.bmc.disableCertificateVerification on BareMetalHosts this
+  # backend creates. Leave false (verify) unless the BMCs use untrusted
+  # certificates.
+  disableBMCVerification: false
   hostClass: "bcm"
   bmhNamespace: ""
 

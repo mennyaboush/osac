@@ -373,6 +373,7 @@ var _ = Describe("BCM Inventory Adapter", func() {
 					Expect(params.ConsumerRef.Kind).To(Equal("BareMetalInstance"))
 					Expect(params.ConsumerRef.Name).To(Equal("bmi-123"))
 					Expect(params.Labels).To(HaveKeyWithValue("osac.openshift.io/managed-by", "baremetal"))
+					Expect(params.DisableCertificateVerification).To(BeFalse())
 					return nil
 				})
 
@@ -385,6 +386,24 @@ var _ = Describe("BCM Inventory Adapter", func() {
 			Expect(host.HostType).To(Equal("h100"))
 			Expect(host.HostClass).To(Equal("bcm"))
 			Expect(host.ManagedBy).To(Equal("baremetal"))
+		})
+
+		It("should set the BMH certificate-verification flag when configured", func(ctx context.Context) {
+			device := makeDevice(`{"hostname":"node001","mac":"aa:bb:cc:dd:ee:01","bmcSettings":{"userName":"root","password":"calvin"},"extra_values":{"resource_class":"h100","osac_instance_id":"bmi-123","osac_bmc_address":"ilo5-virtualmedia+https://10.0.0.1"}}`)
+			mockAPI.EXPECT().GetDevice(gomock.Any(), "node001").Return(device, nil)
+			writer.EXPECT().Create(gomock.Any(), credentials.Reference{HostID: "node001", BMIID: "bmi-123"}, gomock.Eq(credentials.BMC{Username: []byte("root"), Password: []byte("calvin")})).Return(nil)
+			bmhMgr.EXPECT().CreateBMH(gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, params baremetalhost.CreateParams) error {
+					Expect(params.DisableCertificateVerification).To(BeTrue())
+					return nil
+				})
+			bmhMgr.EXPECT().IsBMHAvailable(gomock.Any(), "node001").Return(true, nil)
+
+			client := NewBCMClient(mockAPI, bmhMgr, writer, "bcm")
+			client.SetDisableBMCVerification(true)
+			host, err := client.AssignHost(ctx, bmhNamespace+"/node001", "bmi-123", nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(host).NotTo(BeNil())
 		})
 
 		It("should skip write but still create BMH when osac_instance_id already matches", func(ctx context.Context) {

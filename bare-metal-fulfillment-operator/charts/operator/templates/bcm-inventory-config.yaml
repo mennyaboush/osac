@@ -23,4 +23,5 @@ stringData:
         url: {{ .Values.bcm.url | quote }}
         credentialsSecret: {{ .Values.secrets.bcmCerts | quote }}
         insecureSkipVerify: {{ .Values.bcm.insecureSkipVerify }}
+        disableBMCVerification: {{ .Values.bcm.disableBMCVerification }}
 {{- end }}
